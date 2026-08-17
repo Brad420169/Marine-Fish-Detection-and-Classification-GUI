@@ -1,0 +1,22 @@
+[workspace]
+name = "auto-fish-detect-gui"
+version = "0.1.0"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+GUI = "python scripts/app.py"
+
+[dependencies]
+python = "3.11.*"
+pyqt6 = "*"
+opencv = "*"
+pandas = "*"
+numpy = "*"
+pytorch = "*"
+torchvision = "*"
+pip = "*"
+
+[pypi-dependencies]
+ultralytics = ">=8.4,<9"
+lap = ">=0.5,<0.6"

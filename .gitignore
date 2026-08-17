@@ -1,0 +1,13 @@
+.pixi/
+__pycache__/
+*.pyc
+projects/
+
+# Models - only distribute the default
+models/*
+!models/kona_hawaiiXL.pt
+!models/kona_yolo11s.pt
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
