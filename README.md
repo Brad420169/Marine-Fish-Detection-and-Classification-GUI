@@ -58,7 +58,7 @@ winget install --id Git.Git -e --source winget
 Run:
 
 ```powershell
-winget install --id prefix-dev.pixi -e --source winget
+powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
 After Git and Pixi have finished installing, **close and reopen PowerShell**.
