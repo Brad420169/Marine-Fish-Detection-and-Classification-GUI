@@ -1,361 +1,222 @@
-# Marine Fish Detection and Classification GUI
+# 🐟 Marine Fish Detection and Classification GUI
 
-A desktop application for automated marine fish detection, classification, tracking, and analysis using object detection models.
+A desktop application for automated marine fish detection, classification, tracking, and analysis from underwater video footage.
 
-The application currently supports YOLO-based models, with plans to support additional models such as RF-DETR.
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-managed%20by%20Pixi-orange)
 
-The application provides a graphical interface for automated underwater video processing using AI-driven fish detection, classification, tracking, and annotation. It also allows users to review detected species, inspect Max-N abundance estimates, and export detection results for further analysis.
+---
 
-## Features
+## Overview
 
-- Automated marine fish detection and classification
-- Object detection and tracking
+Marine Fish Detection and Classification GUI provides an accessible graphical interface for processing underwater video using AI-driven fish detection and classification.
+
+The application is designed to allow researchers and marine scientists to analyse underwater footage without requiring programming experience.
+
+### Features
+
+- Automated fish detection and species classification
+- Multi-object tracking
+- Max-N abundance estimation by species
 - Annotated video output
 - Species-level detection summaries
-- Max-N abundance estimates
 - Low-confidence detection review
 - Detection summary charts
+- CSV result exports
 - Project-based organisation of detection runs
 - Support for additional compatible YOLO model weights
-- Extensible architecture for future object detection models
-- CPU processing and GPU acceleration on compatible hardware
+- GPU acceleration on compatible hardware with CPU fallback
 
 ---
 
-## Requirements
+## Quick Start
 
-The application is currently intended for **Windows 10 and Windows 11**.
+> **Requirements:** Windows 10 or 11, an internet connection, and approximately **5 GB of free disk space**.
 
-Furthermore, you will need to have installed:
+### 1. Install Git and Pixi
 
-- Git
-- Git LFS
-- Pixi
+Open **PowerShell**:
 
-Python does **not** need to be installed separately. Pixi automatically creates and manages the required Python environment and software dependencies.
+Press `Win`, type `PowerShell`, and press Enter.
 
-> **Note:** The first installation may take several minutes. The application uses computer vision and machine-learning packages such as PyTorch, Ultralytics, OpenCV, and PyQt6. Allow approximately 5 GB of free disk space for the application environment and model weights, plus additional space for input videos and detection outputs.
----
-
-## Installation
-
-The complete installation can be performed through **Windows PowerShell**.
-
-### 1. Open PowerShell
-
-Open the Windows Start menu, search for **PowerShell**, and open **Windows PowerShell** or **Terminal**.
-
-### 2. Install Git
-
-Run:
+Copy and run:
 
 ```powershell
 winget install --id Git.Git -e --source winget
-```
-
-### 3. Install Pixi
-
-Run:
-
-```powershell
 powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
-After Git and Pixi have finished installing, **close and reopen PowerShell**.
+When both installations finish, **close PowerShell and open it again**.
 
-Confirm that Git and Pixi are available:
+### 2. Install the Application
 
-```powershell
-git --version
-pixi --version
-```
-
-Git for Windows includes Git LFS. Confirm that it is available:
-
-```powershell
-git lfs version
-```
-
-Then initialise Git LFS:
-
-```powershell
-git lfs install
-```
-
-### 4. Download the Application
-
-Navigate to the folder where you would like to install the application.
-
-For example, to install it on your Desktop:
+Copy and run:
 
 ```powershell
 cd "$HOME\Desktop"
-```
-
-Clone the repository:
-
-```powershell
+git lfs install
 git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-```
-
-Enter the application folder:
-
-```powershell
 cd Marine-Fish-Detection-and-Classification-GUI
-```
-
-The repository uses Git LFS for large model-weight files. If required, ensure the model files have been downloaded with:
-
-```powershell
 git lfs pull
-```
-
-### 5. Install the Application Environment
-
-Run:
-
-```powershell
 pixi install
 ```
 
-Pixi will automatically download and configure the required Python environment and application dependencies.
+> **Note:** The first installation may take several minutes while the application environment and model weights are downloaded.
 
-The first installation may take several minutes depending on your computer and internet connection.
+### 3. Launch
 
----
+Open the **Marine-Fish-Detection-and-Classification-GUI** folder on your Desktop and double-click:
 
-## Launching the Application
+**`launch_gui.bat`**
 
-After installation, the application can be launched from PowerShell with:
+That's it. Future launches only require double-clicking `launch_gui.bat`.
 
-```powershell
-pixi run GUI
-```
-
-Alternatively, double-click:
-
-```text
-launch_gui.bat
-```
-
-from the application folder.
-
-After the initial installation, you normally only need to use `launch_gui.bat` to start the application.
-
-### Optional: Create a Desktop Shortcut
-
-To make the application easier to access:
-
-1. Find `launch_gui.bat` in the application folder.
-2. Right-click the file.
-3. Select **Show more options** if required.
-4. Select **Send to → Desktop (create shortcut)**.
-5. Rename the shortcut to **Marine Fish Detector** if desired.
-
-The application can then be launched directly from the desktop without opening PowerShell.
+> **Optional:** Right-click `launch_gui.bat` → **Send to → Desktop (create shortcut)** to create a desktop launcher.
 
 ---
 
 ## Using the Application
 
-### Create a Project
+### 1. Create a Project
 
-When the application starts:
+When the application opens:
 
 1. Enter a project name.
-2. Select an output folder.
+2. Select where you want detection results to be stored.
 3. Click **Create**.
 
-The selected output folder determines where detection results produced by the project are stored.
+Your detection runs will be organised under this project.
 
-Project information is created locally and is not stored in the GitHub repository.
+### 2. Select a Video
 
-### Select a Video
+Select a video using the **Video Input** section or drag and drop a video directly into the application.
 
-Select a video using the **Video Input** section, or drag and drop a video directly into the application.
+Supported formats:
 
-Supported video formats include:
+- `.mp4`
+- `.avi`
+- `.mov`
+- `.mkv`
 
-- MP4
-- AVI
-- MOV
-- MKV
+### 3. Select a Model
 
-### Select a Model
+Choose a marine fish detection model from the **Model Input** section.
 
-Choose the desired model from the **Model Input** section.
+Detection models are included with the application.
 
-The repository includes marine fish detection model weights by default.
+Additional compatible YOLO `.pt` model weights can be added using **Add model weights**.
 
-Additional compatible YOLO `.pt` model weights can be added using **Add model weights** within the application.
+### 4. Configure Detection Settings
 
-### Detection Settings
+The following parameters can be adjusted before running detection:
 
-Three detection parameters can be configured before starting a run:
+| Setting | Description |
+|---|---|
+| **Detection confidence** | Minimum confidence required for a detection to be accepted |
+| **Overlap sensitivity** | Controls how overlapping detections are handled |
+| **Flag for review below** | Accepted detections below this confidence are flagged for manual review |
 
-- **Detection confidence** — controls the minimum confidence required for a detection to be accepted.
-- **Overlap sensitivity** — controls how overlapping detection boxes are handled.
-- **Flag for review below** — determines the confidence threshold below which accepted detections are included in the review output.
+Values can be changed using either the slider or the numeric field.
 
-The values can be adjusted using either the sliders or the editable numeric fields.
+Hover over a parameter name in the application for additional information.
 
-Hover over a setting name within the application for additional information about that parameter.
+The default values provide a reasonable starting point.
 
-The default settings provide a reasonable starting point for detection.
+### 5. Run Detection
 
-### Run Detection
+Click **▶ Run Detection**.
 
-Click:
-
-**▶ Run Detection**
-
-The application displays:
+While the video is being processed, the application displays:
 
 - Detection progress
 - Frames processed
 - Processing speed
-- Elapsed processing time
-- Estimated remaining time
+- Elapsed time
+- Estimated time remaining
 - Processing device
-- Processing status
 
-When processing finishes, the **Results** page opens automatically.
+The **Results** page opens automatically when processing is complete.
 
 ---
 
-## Detection Results
+## Results
 
-Each completed detection run can produce the following outputs.
+The Results page provides a summary of the completed detection run and access to its generated outputs.
 
 ### Annotated Video
 
-An annotated copy of the input video containing detected fish, bounding boxes, species classifications, confidence scores, frame numbers, and timestamps.
+The annotated video contains detected fish with:
 
-### Summary CSV
+- Bounding boxes
+- Species classifications
+- Confidence scores
+- Frame numbers
+- Video timestamps
 
-```text
-track_summary.csv
-```
+The video can be opened directly from the Results page.
 
-Contains species-level detection information including:
+### Detection Summary
+
+The application generates:
+
+**`track_summary.csv`**
+
+This contains species-level information including:
 
 - Species
 - Max-N
 - Max-N timestamp
-- Max-N frame
-- First observation
-- Last observation
+- First and last observation
 - Visible duration
-- Observation span
 - Unique tracks
 - Total detections
 - Mean detection confidence
 
-### Review CSV
+### Low-Confidence Review
 
-```text
-low_confidence_review.csv
-```
+The application generates:
 
-Contains accepted detections below the configured review-confidence threshold so that uncertain detections can be identified for manual review.
+**`low_confidence_review.csv`**
 
-Information includes:
-
-- Frame number
-- Timestamp
-- Species
-- Confidence
-- Track ID
-- Bounding-box coordinates
-- Notes field
+This contains accepted detections below the selected review threshold so uncertain detections can be identified for manual inspection.
 
 ### Max-N Example Frames
 
-The application saves example frames associated with reported Max-N observations.
+Example frames are saved for reported Max-N observations, with the relevant detections highlighted.
 
-Target detections are highlighted to make it easier to visually inspect the fish contributing to the reported Max-N value.
+These can be used to visually inspect the fish contributing to the Max-N estimate.
 
-### Detection Summary Charts
+### Summary Charts
 
-The Results page provides graphical summaries including:
+The Results page includes charts showing:
 
 - Peak abundance (Max-N)
-- Total detections by species
-- Visible duration by species
+- Total detections
+- Visible duration
 - Mean detection confidence
+
+Results can also be exported as a summary figure.
 
 ### Past Runs
 
-Completed detection runs are stored within the project and can be reopened from the **Past Runs** section.
-
-This allows previous results to be viewed without rerunning the detection pipeline.
+Previous detection runs can be reopened from the **Past Runs** section without processing the video again.
 
 ---
 
-## Updating the Application
+## Updating
 
-To update to the latest version, open PowerShell in the application repository and run:
+To update the application, open PowerShell in the application folder and run:
 
 ```powershell
 git pull
-```
-
-Ensure any updated Git LFS files are downloaded:
-
-```powershell
 git lfs pull
-```
-
-Then update the Pixi environment:
-
-```powershell
 pixi install
 ```
 
-Launch the application normally:
+Then launch normally using:
 
-```powershell
-pixi run GUI
-```
-
-or double-click:
-
-```text
-launch_gui.bat
-```
-
----
-
-## Project Structure
-
-```text
-Marine-Fish-Detection-and-Classification-GUI/
-│
-├── assets/             Application icons and graphics
-├── models/             Marine fish detection model weights
-├── scripts/            Application source code
-│
-├── launch_gui.bat      Windows application launcher
-├── pixi.toml           Pixi environment configuration
-├── pixi.lock           Locked dependency environment
-├── .gitattributes      Git LFS configuration
-├── .gitignore          Files excluded from version control
-└── README.md
-```
-
-The following are generated locally and are not stored in the repository:
-
-```text
-.pixi/
-projects/
-__pycache__/
-```
-
-The `.pixi` directory contains the locally generated Pixi environment.
-
-The `projects` directory contains locally generated application project information.
-
-Detection outputs are stored in the output locations selected by the user when projects are created.
+**`launch_gui.bat`**
 
 ---
 
@@ -363,29 +224,23 @@ Detection outputs are stored in the output locations selected by the user when p
 
 ### `git` is not recognised
 
-Close PowerShell and open a new PowerShell window after installing Git.
+Close PowerShell and open it again.
 
-Then run:
-
-```powershell
-git --version
-```
-
-If the command is still unavailable, restart Windows and try again.
+If the problem continues, restart Windows and try again.
 
 ### `pixi` is not recognised
 
-Close PowerShell and open a new PowerShell window after installing Pixi.
+Close PowerShell and open it again.
 
-Then run:
+Then check:
 
 ```powershell
 pixi --version
 ```
 
-### Git LFS model files did not download
+### Model files did not download
 
-From inside the application repository, run:
+Open PowerShell in the application folder and run:
 
 ```powershell
 git lfs install
@@ -401,23 +256,43 @@ pixi install
 pixi run GUI
 ```
 
-Launching through PowerShell will display any error messages that may help identify the problem.
+Any startup errors will then be displayed in PowerShell.
 
-### Updating causes dependency problems
+### Detection is slow
 
-Run:
+Processing speed depends heavily on the available hardware.
 
-```powershell
-pixi install
+A compatible GPU can significantly improve detection performance. Systems without a compatible GPU can use CPU processing, but processing will generally be slower.
+
+---
+
+## Project Structure
+
+```text
+Marine-Fish-Detection-and-Classification-GUI/
+│
+├── assets/             Application icons and graphics
+├── models/             Marine fish detection model weights
+├── scripts/            Application source code
+│
+├── launch_gui.bat      Windows launcher
+├── pixi.toml           Environment configuration
+├── pixi.lock           Locked dependency environment
+├── .gitattributes      Git LFS configuration
+├── .gitignore          Local/generated file exclusions
+├── LICENSE             Software license
+└── README.md
 ```
 
-The repository includes `pixi.lock`, which is used by Pixi to reproduce the application's dependency environment.
+Application environments and user-created project information are generated locally and are not stored in the repository.
+
+Detection outputs are stored in the location selected by the user when creating a project.
 
 ---
 
 ## Development
 
-The application is written primarily in Python and uses technologies including:
+The application is written in Python and uses:
 
 - PyQt6
 - Ultralytics YOLO
@@ -428,36 +303,34 @@ The application is written primarily in Python and uses technologies including:
 
 The development and runtime environment is managed using Pixi.
 
-The application can be launched from the development environment using:
+To launch the application from PowerShell:
 
 ```powershell
 pixi run GUI
 ```
 
-### Planned Development
+### Planned Features
 
-Potential future development includes:
+Future development may include:
 
 - Support for additional object detection architectures such as RF-DETR
-- Additional model-management functionality
-- Further detection review and correction tools
-- Expanded result visualisation and analysis
+- Expanded model management
+- Improved detection review and correction tools
+- Additional result visualisation and analysis options
 
 ---
 
 ## Model and Dataset Attribution
 
-The marine fish detection model weights included with this project were trained using the **Kona, Hawaii Dataset**, published by ReefOSHawaii on Roboflow Universe.
+The included marine fish detection models were trained using the **Kona, Hawaii Dataset**, published by ReefOSHawaii on Roboflow Universe.
 
 **Dataset citation:**
 
 > ReefOSHawaii. (2022). *Kona, Hawaii Dataset*. Roboflow Universe.
 
-The dataset is available from:
-
 [Kona, Hawaii Dataset — Roboflow Universe](https://universe.roboflow.com/reefoshawaii/kona-hawaii)
 
-The dataset is licensed under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**:
+The dataset is licensed under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**.
 
 [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
 
@@ -467,6 +340,6 @@ The model weights included in this repository were trained by the author of this
 
 ## License
 
-The application source code is licensed under the **MIT License**. See `LICENSE` for details.
+The application source code is licensed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
 The included model weights were trained using the Kona, Hawaii Dataset described above. The underlying training dataset is provided by ReefOSHawaii under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**.
