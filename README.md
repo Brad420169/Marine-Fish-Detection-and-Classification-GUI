@@ -1,6 +1,6 @@
 # 🐟 Marine Fish Detection and Classification GUI
 
-A desktop application for automated marine fish detection, classification, tracking, and analysis from underwater video footage.
+A desktop application for automated marine fish detection, classification, tracking, and analysis from underwater video.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -12,7 +12,7 @@ A desktop application for automated marine fish detection, classification, track
 
 Marine Fish Detection and Classification GUI provides an accessible graphical interface for processing underwater video using AI-driven fish detection and classification.
 
-The application is designed to allow researchers and marine scientists to analyse underwater footage without requiring programming experience.
+The application allows researchers and marine scientists to incorporate AI tools within their underwater marine analysis without requiring programming experience.
 
 ### Features
 
@@ -22,19 +22,19 @@ The application is designed to allow researchers and marine scientists to analys
 - Annotated video output
 - Species-level detection summaries
 - Low-confidence detection review
-- Detection summary charts
+- Detection summary histograms and charts
 - CSV result exports
 - Project-based organisation of detection runs
-- Support for additional compatible YOLO model weights
-- GPU acceleration on compatible hardware with CPU fallback
+- Support for additional compatible YOLO model weights (future support for additional AI models)
 
 ---
 
 ## Quick Start
 
-> **Requirements:** Windows 10 or 11, an internet connection, and approximately **5 GB of free disk space**.
+> **Requirements:** Windows or Linux (Ubuntu 24.04) operating system, an internet connection, and approximately **5 GB of free disk space**.
 
-### 1. Install Git and Pixi
+### Windows Installation 
+#### 1. Install Git and Pixi
 
 Open **PowerShell**:
 
@@ -49,7 +49,7 @@ powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | i
 
 When both installations finish, **close PowerShell and open it again**.
 
-### 2. Install the Application
+#### 2. Install the Application
 
 Copy and run:
 
@@ -64,7 +64,7 @@ pixi install
 
 > **Note:** The first installation may take several minutes while the application environment and model weights are downloaded.
 
-### 3. Launch
+#### 3. Launch
 
 Open the **Marine-Fish-Detection-and-Classification-GUI** folder on your Desktop and double-click:
 
@@ -75,6 +75,44 @@ That's it. Future launches only require double-clicking `launch_gui.bat`.
 > **Optional:** Right-click `launch_gui.bat` → **Send to → Desktop (create shortcut)** to create a desktop launcher.
 
 ---
+
+### Linux (Ubuntu) Installation
+
+#### 1. Install Git and Pixi
+Open **Terminal**:
+Press `Ctrl+Alt+T` or search for **Terminal** in your applications.
+Copy and run:
+```bash
+sudo apt update && sudo apt install -y git git-lfs
+curl -fsSL https://pixi.sh/install.sh | bash
+```
+When both installations finish, **close the terminal and open it again**.
+
+#### 2. Install the Application
+Copy and run:
+```bash
+cd ~/Desktop
+git lfs install
+git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
+cd Marine-Fish-Detection-and-Classification-GUI
+git lfs pull
+pixi install
+```
+> **Note:** The first installation may take several minutes while the application environment and model weights are downloaded.
+> 
+#### 3. Launch
+Open a terminal inside the **Marine-Fish-Detection-and-Classification-GUI** folder and run:
+```bash
+pixi run start
+```
+> **Optional:** If the repository includes a `launch_gui.sh` script, make it executable and run it instead:
+> ```bash
+> chmod +x launch_gui.sh
+> bash launch_gui.sh
+> ```
+> You can then double-click it in your file manager (**Run as Program**) for future launches.
+>
+> ---
 
 ## Using the Application
 
