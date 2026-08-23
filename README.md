@@ -30,29 +30,27 @@ The application allows researchers and marine scientists to incorporate AI tools
 ---
 
 ## Quick Start
+> **Requirements:** Windows or Linux (Ubuntu 24.04), and approximately **5 GB of free disk space**.
 
-> **Requirements:** Windows or Linux (Ubuntu 24.04) operating system, an internet connection, and approximately **5 GB of free disk space**.
+### 1. Install Git and Pixi
 
-### Windows Installation 
-#### 1. Install Git and Pixi
-
-Open **PowerShell**:
-
-Press `Win`, type `PowerShell`, and press Enter.
-
-Copy and run:
-
+**Windows** — open **PowerShell** (`Win` → type `PowerShell` → Enter):
 ```powershell
 winget install --id Git.Git -e --source winget
 powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
-When both installations finish, **close PowerShell and open it again**.
+**Linux (Ubuntu)** — open **Terminal** (`Ctrl+Alt+T`):
+```bash
+sudo apt update && sudo apt install -y git git-lfs
+curl -fsSL https://pixi.sh/install.sh | bash
+```
 
-#### 2. Install the Application
+When installation finishes, **close and reopen** PowerShell/Terminal.
 
-Copy and run:
+### 2. Install the Application
 
+**Windows** (PowerShell):
 ```powershell
 cd "$HOME\Desktop"
 git lfs install
@@ -62,34 +60,7 @@ git lfs pull
 pixi install
 ```
 
-> **Note:** The first installation may take several minutes while the application environment and model weights are downloaded.
-
-#### 3. Launch
-
-Open the **Marine-Fish-Detection-and-Classification-GUI** folder on your Desktop and double-click:
-
-**`launch_gui.bat`**
-
-That's it. Future launches only require double-clicking `launch_gui.bat`.
-
-> **Optional:** Right-click `launch_gui.bat` → **Send to → Desktop (create shortcut)** to create a desktop launcher.
-
----
-
-### Linux (Ubuntu) Installation
-
-#### 1. Install Git and Pixi
-Open **Terminal**:
-Press `Ctrl+Alt+T` or search for **Terminal** in your applications.
-Copy and run:
-```bash
-sudo apt update && sudo apt install -y git git-lfs
-curl -fsSL https://pixi.sh/install.sh | bash
-```
-When both installations finish, **close the terminal and open it again**.
-
-#### 2. Install the Application
-Copy and run:
+**Linux** (Terminal):
 ```bash
 cd ~/Desktop
 git lfs install
@@ -97,23 +68,49 @@ git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification
 cd Marine-Fish-Detection-and-Classification-GUI
 git lfs pull
 pixi install
+chmod +x launch_gui.sh
 ```
-> **Note:** The first installation may take several minutes while the application environment and model weights are downloaded.
-> 
-#### 3. Launch
-Open a terminal inside the **Marine-Fish-Detection-and-Classification-GUI** folder and run:
-```bash
-pixi run start
-```
-> **Optional:** If the repository includes a `launch_gui.sh` script, make it executable and run it instead:
-> ```bash
-> chmod +x launch_gui.sh
-> bash launch_gui.sh
-> ```
-> You can then double-click it in your file manager (**Run as Program**) for future launches.
->
-> ---
+### 3. Create a Desktop Shortcut
 
+**Windows** — open the **Marine-Fish-Detection-and-Classification-GUI** folder on your Desktop, right-click **`launch_gui.bat`** → **Send to → Desktop (create shortcut)**.
+
+**Linux** — from the same terminal (still inside the project folder), copy and paste the entire block below, then press Enter:
+
+```bash
+PROJECT_DIR="$(pwd)"
+ICON_PNG="$PROJECT_DIR/assets/icon.png"
+
+DESKTOP_FILE="$HOME/.local/share/applications/marine-fish-gui.desktop"
+cat > "$DESKTOP_FILE" << EOF
+[Desktop Entry]
+Type=Application
+Name=Marine Fish Detection GUI
+Comment=Launch the Marine Fish Detection and Classification GUI
+Exec=bash -c "cd '$PROJECT_DIR' && ./launch_gui.sh"
+Icon=$ICON_PNG
+Terminal=true
+Categories=Utility;
+EOF
+
+chmod +x "$DESKTOP_FILE"
+cp "$DESKTOP_FILE" "$HOME/Desktop/"
+chmod +x "$HOME/Desktop/marine-fish-gui.desktop"
+gio set "$HOME/Desktop/marine-fish-gui.desktop" metadata::trusted true 2>/dev/null || true
+
+gtk-update-icon-cache "$HOME/.local/share/icons" 2>/dev/null
+nautilus -q
+```
+
+You'll see a new icon called **"Marine Fish Detection GUI"** on your Desktop.
+
+### 4. Launch
+
+Double-click the **Marine Fish Detection GUI** icon on your Desktop.
+
+- **Windows:** launches immediately.
+- **Linux:** the first time, you may be asked if you trust the shortcut — click **"Trust and Launch"**. If double-clicking does nothing, right-click the icon and choose **"Allow Launching"**, then try again.
+
+That's it — every future launch is just this same double-click.
 ## Using the Application
 
 ### 1. Create a Project
