@@ -2,7 +2,7 @@
 name = "auto-fish-detect-gui"
 version = "0.1.0"
 channels = ["conda-forge"]
-platforms = ["win-64"]
+platforms = ["win-64", "linux-64"]
 
 [tasks]
 GUI = "python scripts/app.py"
