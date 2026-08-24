@@ -70,9 +70,25 @@ git lfs pull
 pixi install
 chmod +x launch_gui.sh
 ```
+
 ### 3. Create a Desktop Shortcut
 
-**Windows** — open the **Marine-Fish-Detection-and-Classification-GUI** folder on your Desktop, right-click **`launch_gui.bat`** → **Send to → Desktop (create shortcut)**.
+**Windows** — from the same PowerShell window (still inside the project folder), copy and paste the entire block below, then press Enter:
+
+```powershell
+$ProjectDir = (Get-Location).Path
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("$HOME\Desktop\Marine Fish Detection GUI.lnk")
+$Shortcut.TargetPath = "$ProjectDir\launch_gui.bat"
+$Shortcut.WorkingDirectory = $ProjectDir
+$Shortcut.IconLocation = "$ProjectDir\assets\icon.ico"
+$Shortcut.Save()
+```
+
+> **If OneDrive backs up your Desktop:** your real Desktop folder may be `OneDrive\Desktop` instead of `Desktop`. If the shortcut doesn't appear, change the shortcut path in the second line to:
+> ```powershell
+> $Shortcut = $WshShell.CreateShortcut("$HOME\OneDrive\Desktop\Marine Fish Detection GUI.lnk")
+> ```
 
 **Linux** — from the same terminal (still inside the project folder), copy and paste the entire block below, then press Enter:
 
