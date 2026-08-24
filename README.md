@@ -128,11 +128,16 @@ That's it — every future launch is just this same double-click.
 
 ### 1. Create a Project
 
+
 When the application opens:
 
 1. Enter a project name.
 2. Select where you want detection results to be stored.
 3. Click **Create**.
+
+<p align="left">
+<img src="./assets/projects_page.png" height="400"/>
+</p>
 
 Your detection runs will be organised under this project.
 
@@ -178,6 +183,10 @@ While the video is being processed, the application displays:
 - Processing device
 
 The **Results** page opens automatically when processing is complete.
+
+<p align="center">
+<img src="./assets/main_page.png" height="600"/>
+</p>
 
 ---
 
@@ -236,6 +245,10 @@ The Results page includes charts showing:
 - Total detections
 - Visible duration
 - Mean detection confidence
+
+<p align="center">
+<img src="./assets/results.png" height="400"/>
+</p>
 
 Results can also be exported as a summary figure.
 
