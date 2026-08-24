@@ -48,16 +48,29 @@ curl -fsSL https://pixi.sh/install.sh | bash
 
 When installation finishes, **close and reopen** PowerShell/Terminal.
 
-### 2. Install the Application
+### 2. Install the Application and Create a Desktop Shortcut
 
 **Windows USERS** (PowerShell):
 ```powershell
-cd "$HOME\Desktop"
+if (Test-Path "$HOME\OneDrive\Desktop") {
+    $DesktopDir = "$HOME\OneDrive\Desktop"
+} else {
+    $DesktopDir = "$HOME\Desktop"
+}
+cd $DesktopDir
 git lfs install
 git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
 cd Marine-Fish-Detection-and-Classification-GUI
 git lfs pull
 pixi install
+
+$ProjectDir = (Get-Location).Path
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("$ProjectDir\..\Marine Fish Detection GUI.lnk")
+$Shortcut.TargetPath = "$ProjectDir\launch_gui.bat"
+$Shortcut.WorkingDirectory = $ProjectDir
+$Shortcut.IconLocation = "$ProjectDir\assets\icon.ico"
+$Shortcut.Save()
 ```
 
 **Linux USERS** (Terminal):
@@ -69,30 +82,7 @@ cd Marine-Fish-Detection-and-Classification-GUI
 git lfs pull
 pixi install
 chmod +x launch_gui.sh
-```
 
-### 3. Create a Desktop Shortcut
-
-**Windows USERS** — from the same PowerShell window (still inside the project folder), copy and paste the entire block below, then press Enter:
-
-```powershell
-$ProjectDir = (Get-Location).Path
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$HOME\Desktop\Marine Fish Detection GUI.lnk")
-$Shortcut.TargetPath = "$ProjectDir\launch_gui.bat"
-$Shortcut.WorkingDirectory = $ProjectDir
-$Shortcut.IconLocation = "$ProjectDir\assets\icon.ico"
-$Shortcut.Save()
-```
-
-> **If OneDrive backs up your Desktop:** your real Desktop folder may be `OneDrive\Desktop` instead of `Desktop`. If the shortcut doesn't appear, change the shortcut path in the second line to:
-> ```powershell
-> $Shortcut = $WshShell.CreateShortcut("$HOME\OneDrive\Desktop\Marine Fish Detection GUI.lnk")
-> ```
-
-**Linux USERS** — from the same terminal (still inside the project folder), copy and paste the entire block below, then press Enter:
-
-```bash
 PROJECT_DIR="$(pwd)"
 ICON_PNG="$PROJECT_DIR/assets/icon.png"
 
@@ -119,7 +109,7 @@ nautilus -q
 
 You'll see a new icon called **"Marine Fish Detection GUI"** on your Desktop.
 
-### 4. Launch
+### 3. Launch
 
 Double-click the **Marine Fish Detection GUI** icon on your Desktop.
 
@@ -127,6 +117,7 @@ Double-click the **Marine Fish Detection GUI** icon on your Desktop.
 - **Linux:** the first time, you may be asked if you trust the shortcut — click **"Trust and Launch"**. If double-clicking does nothing, right-click the icon and choose **"Allow Launching"**, then try again.
 
 That's it — every future launch is just this same double-click.
+
 ## Using the Application
 
 ### 1. Create a Project
