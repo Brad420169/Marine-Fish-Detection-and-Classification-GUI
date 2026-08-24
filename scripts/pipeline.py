@@ -21,7 +21,6 @@ from ultralytics import YOLO
 # Constants
 # ============================================================
 
-#REVIEW_CONFIDENCE = 0.5
 
 SUMMARY_FIELDS = [
     "dataset",
@@ -54,15 +53,12 @@ FLAGGED_FIELDS = [
 ]
 
 
-# ============================================================
 # Run config — passed in by the GUI instead of argparse
-# ============================================================
 
 @dataclass
 class RunConfig:
     video_path:   Path
     weights_path: Path
-    #tracker_path: Path
     output_dir:   Path
     confidence:   float = 0.25
     review_confidence: float = 0.50
@@ -70,10 +66,7 @@ class RunConfig:
     device:       str | None = None
 
 
-# ============================================================
 # Utilities
-# ============================================================
-
 def format_timestamp(seconds: float) -> str:
     """Convert seconds to MM:SS or HH:MM:SS."""
     seconds = max(0, int(round(seconds)))
@@ -307,10 +300,7 @@ def extract_maxn_example_frames(
     return saved
 
 
-# ============================================================
 # Main pipeline function
-# ============================================================
-
 def run_pipeline(
     config: RunConfig,
     on_progress: Callable[[int, int], None] | None = None,
