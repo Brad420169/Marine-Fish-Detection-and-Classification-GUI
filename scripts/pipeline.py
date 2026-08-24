@@ -14,13 +14,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import cv2
-from ultralytics import YOLO
+
+from detectors import load_detector
 
 
-# ============================================================
 # Constants
-# ============================================================
-
 
 SUMMARY_FIELDS = [
     "dataset",
@@ -354,22 +352,24 @@ def run_pipeline(
     log(f"Duration:   {format_timestamp(video_duration)}")
     log(f"Frames:     {total_frames}  |  FPS: {fps:.2f}")
     log(f"Weights:    {config.weights_path.name}")
-    log(f"Tracker:    botsort (default)")
     log(f"Confidence: {config.confidence}  |  IoU: {config.iou}")
     log("Loading model...")
 
-    model = YOLO(str(config.weights_path))
+    detector = load_detector(config.weights_path, device=config.device)
 
-    results = model.track(
-        source=str(config.video_path),
-        tracker="botsort.yaml",
-        conf=config.confidence,
-        iou=config.iou,
-        device=config.device,
-        stream=True,
-        save=False,
-        verbose=False,
-    )
+    if detector.kind == "yolo":
+        log("Model type: YOLO  |  Tracker: botsort (default)")
+    else:
+        log("Model type: RF-DETR  |  Tracker: ByteTrack")
+        if getattr(detector, "class_names_missing", False):
+            log(
+                "WARNING: this RF-DETR checkpoint has no class names embedded — "
+                "species will be labelled class_0, class_1, etc."
+            )
+
+    cap = cv2.VideoCapture(str(config.video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {config.video_path}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(
@@ -392,7 +392,11 @@ def run_pipeline(
     log("Running detection...")
 
     try:
-        for frame_index, result in enumerate(results):
+        frame_index = 0
+        while True:
+            ok, frame_bgr = cap.read()
+            if not ok:
+                break
 
             if is_cancelled and is_cancelled():
                 log("Cancelled.")
@@ -403,36 +407,31 @@ def run_pipeline(
             timestamp_seconds = frame_index / fps
             timestamp         = format_timestamp(timestamp_seconds)
 
-            annotated = result.plot()
+            det_frame = detector.infer(frame_bgr, conf=config.confidence, iou=config.iou)
+
+            annotated = det_frame.annotated
             add_frame_label(annotated, frame_number, timestamp)
             writer.write(annotated)
 
             if on_progress:
                 on_progress(frame_number, total_frames)
 
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
+            frame_index += 1
+
+            species_list = det_frame.species
+            if not species_list:
                 continue
 
-            class_ids   = boxes.cls.int().cpu().tolist()
-            confidences = boxes.conf.cpu().tolist()
-            xyxy        = boxes.xyxy.cpu().tolist()
+            confidences = det_frame.confidences
+            xyxy        = det_frame.xyxy
+            track_ids   = det_frame.track_ids
 
-            species_this_frame: Counter = Counter(
-                result.names[class_id] for class_id in class_ids
-            )
+            species_this_frame: Counter = Counter(species_list)
 
             for species, count in species_this_frame.items():
                 frame_counts[species].append(
                     (frame_number, count, timestamp_seconds)
                 )
-
-            track_ids: list[int | None]
-            if boxes.is_track and boxes.id is not None:
-                track_ids = boxes.id.int().cpu().tolist()
-            else:
-                track_ids = [None] * len(class_ids)
-
 
             # Capture a raw review snapshot whenever this frame establishes a
             # new Max-N for a species. We retain all detections for context,
@@ -440,13 +439,13 @@ def run_pipeline(
             # yellow highlight.
             detections_this_frame = [
                 {
-                    "species": result.names[class_id],
+                    "species": species,
                     "confidence": confidence,
                     "bbox": bbox,
                     "track_id": track_id,
                 }
-                for track_id, class_id, confidence, bbox in zip(
-                    track_ids, class_ids, confidences, xyxy
+                for track_id, species, confidence, bbox in zip(
+                    track_ids, species_list, confidences, xyxy
                 )
             ]
 
@@ -458,15 +457,13 @@ def run_pipeline(
                         "frame_number": frame_number,
                         "timestamp": timestamp,
                         "timestamp_seconds": timestamp_seconds,
-                        "frame": result.orig_img.copy(),
+                        "frame": frame_bgr.copy(),
                         "detections": detections_this_frame,
                     }
 
-            for track_id, class_id, confidence, bbox in zip(
-                track_ids, class_ids, confidences, xyxy
+            for track_id, species, confidence, bbox in zip(
+                track_ids, species_list, confidences, xyxy
             ):
-                species = result.names[class_id]
-
                 if species not in species_data:
                     species_data[species] = {
                         "first_seconds": timestamp_seconds,
@@ -513,6 +510,7 @@ def run_pipeline(
                         "notes": "",
                     })
     finally:
+        cap.release()
         writer.release()
 
     if was_cancelled:

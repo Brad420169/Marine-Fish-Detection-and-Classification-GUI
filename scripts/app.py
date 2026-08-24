@@ -41,9 +41,7 @@ from project_manager import *
 from style import APP_STYLE
 
 
-# ============================================================
 # Paths & System Config
-# ============================================================
 
 ROOT_DIR = Path(__file__).parent.parent
 ICON_PATH = ROOT_DIR / "assets" / "icon.ico"
@@ -54,9 +52,7 @@ if sys.platform == "win32":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("QUT.MarineFishDetector")
 
 
-# ============================================================
 # Helper Functions
-# ============================================================
 
 def open_path(path: Path | None) -> None:
     """Open a file or folder in the OS default viewer."""
@@ -71,9 +67,7 @@ def open_path(path: Path | None) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
-# ============================================================
 # Reusable UI Widgets
-# ============================================================
 
 class PathRow(QWidget):
     """Generic path selection row with inline Browse button."""
@@ -273,7 +267,7 @@ class WeightsRow(QWidget):
         row2.addWidget(spacer)
 
         self.upload_btn = QPushButton("＋  Add model weights…")
-        self.upload_btn.setToolTip("Copy a .pt file into the models folder")
+        self.upload_btn.setToolTip("Copy a .pt (YOLO) or .pth (RF-DETR) file into the models folder")
         self.upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upload_btn.clicked.connect(self._upload_weights)
         row2.addWidget(self.upload_btn, 1)
@@ -287,9 +281,11 @@ class WeightsRow(QWidget):
 
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
-        models = sorted(self.models_dir.glob("*.pt"))
+        models = sorted(
+            [*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth")]
+        )
         if not models:
-            self.combo.addItem("No .pt files found in models/")
+            self.combo.addItem("No .pt/.pth files found in models/")
             self.combo.setEnabled(False)
             return
 
@@ -304,7 +300,10 @@ class WeightsRow(QWidget):
 
     def _upload_weights(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Model Weights", str(self.models_dir), "PyTorch Weights (*.pt)"
+            self,
+            "Select Model Weights",
+            str(self.models_dir),
+            "Model Weights (*.pt *.pth);;YOLO Weights (*.pt);;RF-DETR Weights (*.pth)",
         )
         if not path:
             return
@@ -452,9 +451,7 @@ class ProjectListRow(QWidget):
         self.delete_btn.setVisible(selected)
 
 
-# ============================================================
 # Project Selection Page
-# ============================================================
 
 class ProjectPage(QMainWindow):
 
@@ -666,9 +663,7 @@ class ProjectPage(QMainWindow):
         self.main_window.show()
         self.close()
 
-# ============================================================
 # Chart helpers
-# ============================================================
 
 # Colour palette that matches the app's blue/teal theme
 _PALETTE = [
@@ -887,9 +882,7 @@ def build_charts(csv_path: Path) -> Figure | None:
     return fig
 
 
-# ============================================================
 # Scroll-passthrough canvas
-# ============================================================
 
 class ScrollPassthroughCanvas(FigureCanvas):
     """FigureCanvas that forwards wheel events to the nearest QScrollArea
@@ -905,9 +898,7 @@ class ScrollPassthroughCanvas(FigureCanvas):
         super().wheelEvent(event)
 
 
-# ============================================================
 # Results Page
-# ============================================================
 
 class ResultsPage(QWidget):
     """Page displayed after a detection run finishes."""
@@ -1336,9 +1327,7 @@ class ResultsPage(QWidget):
         if self.output_dir:
             open_path(self.output_dir)
 
-# ============================================================
 # Main Window
-# ============================================================
 
 class MainWindow(QMainWindow):
 
@@ -1358,16 +1347,12 @@ class MainWindow(QMainWindow):
         self.outputs: dict[str, Path] = {}
         self._processing_device = "—"
 
-        # ====================================================
         # Page navigation
-        # ====================================================
 
         self.pages = QStackedWidget()
         self.setCentralWidget(self.pages)
 
-        # ====================================================
         # Detection page
-        # ====================================================
 
         self.detection_page = QScrollArea()
         self.detection_page.setWidgetResizable(True)
@@ -1548,9 +1533,7 @@ class MainWindow(QMainWindow):
 
 
 
-        # ====================================================
         # Results page
-        # ====================================================
 
         self.results_page = ResultsPage(
             on_run_another=self._show_detection_page,
@@ -1558,9 +1541,8 @@ class MainWindow(QMainWindow):
         )
         self.pages.addWidget(self.results_page)
 
-    # ========================================================
+    
     # Navigation
-    # ========================================================
 
     def _refresh_runs_list(self) -> None:
         """Rebuild the Past Runs buttons from the project's current run data."""
@@ -1686,9 +1668,7 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.results_page)
 
 
-    # ========================================================
     # Run Detection
-    # ========================================================
 
     def _run(self) -> None:
         video = self.video_row.get_path()
@@ -1773,9 +1753,7 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(False)
         self._on_log("Cancelling detection...")
 
-    # ========================================================
     # Worker Signals
-    # ========================================================
 
     def _on_progress(
         self,
@@ -1880,9 +1858,7 @@ class MainWindow(QMainWindow):
         self.worker = None
 
 
-# ============================================================
 # Application Entry Point
-# ============================================================
 
 def main() -> None:
     app = QApplication(sys.argv)
