@@ -8,11 +8,17 @@ A desktop application for automated marine fish detection, classification, track
 
 ---
 
-## Overview
+## Overview 
 
 The Marine Fish Detection and Classification GUI provides an accessible graphical interface for processing underwater video using AI-driven fish detection and classification.
 
-The application lets researchers and marine scientists incorporate AI tools into underwater marine analysis without requiring programming experience.
+The application lets researchers and marine scientists incorporate AI tools to help accelerate their underwater marine analysis without requiring programming experience.
+
+Below is an example of AI-annotated underwater imagery positioned next to the ground truth, labelled by a human.
+
+<p align="center">
+<img src="./assets/side_by_side_clip.gif" height="250"/>
+</p>
 
 ### Features
 
