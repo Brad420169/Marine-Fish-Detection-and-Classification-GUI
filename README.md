@@ -405,7 +405,95 @@ Marine-Fish-Detection-and-Classification-GUI/
 
 Application environments and user-created project information are generated locally and are not stored in the repository.
 
-Detection outputs are stored in the location selected by the user when creating a project.
+Detection outputs are stored in the location the user selects when creating a project.
+
+## Adding a New AI Object/Fish Detector Model
+
+Detection logic is isolated in `scripts/detectors.py` behind a single adapter interface, so `pipeline.py` and the GUI can remain agnostic to the model architecture. 
+Adding a new model type (e.g. a different YOLO variant, DETR variant, or something else entirely) means implementing an additional Python class to support the new model type — nothing else in the codebase needs to change.
+
+### How the adapter layer works
+
+Every detector is a subclass of `BaseDetector` with one required method:
+
+```python
+class BaseDetector:
+    kind: str = "base"
+
+    def infer(self, frame_bgr: np.ndarray, conf: float, iou: float) -> DetectionFrame:
+        raise NotImplementedError
+```
+
+`infer()` takes a single BGR video frame plus the confidence/IoU thresholds from the GUI sliders, and must return a `DetectionFrame`:
+
+```python
+@dataclass
+class DetectionFrame:
+    annotated: np.ndarray                       # frame with boxes/labels drawn on it
+    species: list[str] = field(default_factory=list)
+    confidences: list[float] = field(default_factory=list)
+    xyxy: list[list[float]] = field(default_factory=list)       # [x1, y1, x2, y2] per detection
+    track_ids: list[int | None] = field(default_factory=list)   # None if no tracker
+```
+
+As long as your class returns a correctly shaped `DetectionFrame`, everything downstream, such as the annotated output video, `track_summary.csv`, `low_confidence_review.csv`, the Max-N example frames, and the Results page charts, will work automatically.
+
+### Steps to add a new model
+
+1. **Write a new class in `detectors.py`** that subclasses `BaseDetector`:
+
+```python
+   class MyModelDetector(BaseDetector):
+       kind = "mymodel"
+
+       def __init__(self, weights_path: Path, device: str | None) -> None:
+           # Load your model here, once, at startup.
+           from my_model_lib import MyModel
+           self.model = MyModel.load(str(weights_path), device=device)
+
+       def infer(self, frame_bgr: np.ndarray, conf: float, iou: float) -> DetectionFrame:
+           # Run inference, then map your model's output into the
+           # DetectionFrame fields above. Draw boxes/labels onto a
+           # copy of frame_bgr for the `annotated` field.
+           ...
+           return DetectionFrame(
+               annotated=annotated,
+               species=species,
+               confidences=confidences,
+               xyxy=xyxy,
+               track_ids=track_ids,
+           )
+```
+
+   Look at `YOLODetector` and `RFDETRDetector` in the same file as worked examples. Note how `RFDETRDetector` handles a model with no built-in tracker by attaching `supervision.ByteTrack()` manually. If your model doesn't track objects across frames either, do the same.
+
+2. **Register the weights file extension** in the `load_detector()` factory at the bottom of `detectors.py`:
+
+```python
+   def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
+       suffix = weights_path.suffix.lower()
+       if suffix == ".pt":
+           return YOLODetector(weights_path, device=device)
+       if suffix == ".pth":
+           return RFDETRDetector(weights_path, device=device)
+       if suffix == ".your_extension":
+           return MyModelDetector(weights_path, device=device)
+       raise ValueError(...)
+```
+
+   The GUI's model dropdown (`WeightsRow` in `widgets.py`) currently only globs for `*.pt` and `*.pth` files in `models/` — if your weights use a different extension, add it to the glob there too:
+
+```python
+   models = sorted(
+       [*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth"), *self.models_dir.glob("*.your_extension")]
+   )
+```
+
+3. **Add any new dependencies** to `pixi.toml`, then run `pixi install` to lock them into `pixi.lock`.
+
+4. **Drop your weights file into `models/`** (or use the "Add model weights…" button in the GUI) and select it from the Weights dropdown — the rest of the pipeline (detection loop, CSV export, Max-N frame extraction, summary charts) runs unmodified.
+
+### Notes for tracker-free models
 
 ---
 
@@ -420,113 +508,18 @@ The application is written in Python and uses:
 - Matplotlib
 - NumPy
 
-The development and runtime environment is managed using Pixi.
+Pixi manages the development and runtime environment.
 
 ### Planned Features
 
 Future development may include:
 
-- Support for additional object detection architectures such as RF-DETR
 - Expanded model management
 - Improved detection review and correction tools
 - Additional result visualisation and analysis options
 
 ---
 
-## Adding a New Model Architecture (`scripts/detectors.py`)
-
-All model-specific code lives in **one file**, `scripts/detectors.py`. The rest of
-the application (`pipeline.py`, `worker.py`, the GUI) never imports a model
-library directly — it only ever talks to the adapter interface defined here. This
-is why adding RF-DETR support (when the app originally only ran YOLO) touched a
-single file. Adding a third architecture works the same way.
-
-### The contract: `DetectionFrame`
-
-Every detector, no matter the underlying library, must turn one video frame into
-one `DetectionFrame`:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `annotated` | `np.ndarray` (BGR) | The frame with boxes/labels already drawn, ready to write to the output video |
-| `species` | `list[str]` | Class **name** per detection (not an integer id) |
-| `confidences` | `list[float]` | Score per detection, `0.0`–`1.0` |
-| `xyxy` | `list[list[float]]` | Pixel box `[x1, y1, x2, y2]` per detection |
-| `track_ids` | `list[int \| None]` | Persistent track id per detection, or `None` if this model has no tracker |
-
-All five lists are **parallel** — index `i` refers to the same detection in each.
-Return an empty `DetectionFrame(annotated=frame)` when nothing is detected.
-
-Downstream, `pipeline.py` uses `species` for Max-N counts, `track_ids` for the
-unique-track count, `confidences` for the low-confidence review threshold, `xyxy`
-to crop the Max-N example images, and `annotated` for the output video. If your
-adapter fills these fields correctly, everything else "just works".
-
-### The interface
-
-```python
-class BaseDetector:
-    kind: str = "base"          # short label, e.g. "yolo" / "rfdetr"; used only for logging
-
-    def infer(self, frame_bgr, conf: float, iou: float) -> DetectionFrame:
-        raise NotImplementedError
-```
-
-- **`__init__`** loads the model **once** (weights, device, tracker, annotators).
-- **`infer`** is called once per frame with the confidence and IoU thresholds
-  from the GUI sliders. If your architecture has no IoU/NMS step (RF-DETR is
-  NMS-free), just ignore the `iou` argument.
-
-### The factory: `load_detector()`
-
-```python
-def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
-    suffix = weights_path.suffix.lower()
-    if suffix == ".pt":
-        return YOLODetector(weights_path, device=device)
-    if suffix == ".pth":
-        return RFDETRDetector(weights_path, device=device)
-    raise ValueError(...)
-```
-
-The model type is chosen by **file extension**. To add an architecture you add a
-branch here (and, if it uses a new extension, teach the GUI's *Add model weights*
-dialog to accept it — see `WeightsRow` in `app.py`).
-
-### The two worked examples already in the file
-
-- **`YOLODetector`** — wraps Ultralytics `YOLO`. Tracking is built in, so it calls
-  `model.track(frame, persist=True, tracker="botsort.yaml", conf=..., iou=...)`
-  and reads `result.boxes` (`.cls`, `.conf`, `.xyxy`, `.id`), maps class ids to
-  names via `result.names`, and uses `result.plot()` for the annotated frame.
-- **`RFDETRDetector`** — RF-DETR has **no built-in tracker**, so the adapter
-  attaches one itself: `supervision`'s `ByteTrack`, updated every frame with
-  `tracker.update_with_detections(...)`. It converts BGR→RGB before `predict`,
-  draws boxes with `supervision`'s `BoxAnnotator` / `LabelAnnotator`, resolves the
-  device explicitly (a GPU-trained checkpoint can otherwise force `cuda` on a
-  CPU-only machine), and falls back to placeholder class names if the checkpoint
-  has none embedded.
-
-### Checklist for a new architecture
-
-1. **New class** `class MyDetector(BaseDetector)` with a `kind` string.
-2. **`__init__`**: import the library *inside* the method (keeps it optional),
-   load weights once, resolve the device explicitly rather than trusting whatever
-   the checkpoint saved.
-3. **Tracking**: if the model ships a tracker, use it; otherwise instantiate
-   `sv.ByteTrack()` (or similar) and call it each frame. If you truly have no
-   tracking, set `track_ids = [None] * len(species)` — Max-N still works, only the
-   unique-track count is lost.
-4. **`infer`**: run the model, handle the zero-detection case first, then build
-   the five parallel lists and the annotated BGR frame, and return a
-   `DetectionFrame`.
-5. **Register** the weights extension in `load_detector()`.
-6. **Dependencies**: add any new packages to `pixi.toml` (conda-forge under
-   `[dependencies]`, otherwise `[pypi-dependencies]`) and run `pixi install`.
-
-Nothing outside `detectors.py` should need to change.
-
----
 
 ## Model and Dataset Attribution
 
