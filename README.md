@@ -20,6 +20,12 @@ Below is an example of AI-annotated underwater imagery positioned next to the gr
 <img src="./assets/side_by_side_clip.gif" height="250"/>
 </p>
 
+Here's a full demo of the application in action:
+
+<p align="center">
+<video src="https://github.com/user-attachments/assets/6c2236fa-11d4-4f29-b0e2-a156b227ece0" height="250" controls></video>
+</p>
+
 ### Features
 
 - Automated fish detection and species classification
