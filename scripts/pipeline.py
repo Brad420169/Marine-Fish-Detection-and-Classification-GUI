@@ -48,7 +48,11 @@ FLAGGED_FIELDS = [
     "x2",
     "y2",
     "notes",
+    "frame_image",
+    "reviewed",
 ]
+
+REVIEW_FRAMES_DIRNAME = "review_frames"
 
 
 # Run config — passed in by the GUI instead of argparse
@@ -383,6 +387,24 @@ def run_pipeline(
     species_data: dict[str, dict[str, Any]] = {}
     frame_counts: dict[str, list[tuple[int, int, float]]] = defaultdict(list)
 
+    # Raw (unannotated) frames are saved once per flagged frame number so the
+    # low-confidence review UI has a clean image to draw its own editable
+    # boxes on top of, rather than reusing the model-annotated output video.
+    review_frames_dir = config.output_dir / REVIEW_FRAMES_DIRNAME
+    saved_review_frames: set[int] = set()
+
+    def save_review_frame(frame_number: int, frame_bgr: Any) -> str:
+        """Save a raw copy of a flagged frame, once. Returns the path
+        relative to output_dir (posix style), or "" on failure."""
+        if frame_number in saved_review_frames:
+            return f"{REVIEW_FRAMES_DIRNAME}/frame_{frame_number:06d}.jpg"
+        review_frames_dir.mkdir(parents=True, exist_ok=True)
+        image_path = review_frames_dir / f"frame_{frame_number:06d}.jpg"
+        if cv2.imwrite(str(image_path), frame_bgr):
+            saved_review_frames.add(frame_number)
+            return f"{REVIEW_FRAMES_DIRNAME}/frame_{frame_number:06d}.jpg"
+        return ""
+
     # Store the best raw frame + detections for each species so the Results
     # page can show a dedicated high-contrast Max-N review image.
     maxn_snapshots: dict[str, dict[str, Any]] = {}
@@ -497,6 +519,7 @@ def run_pipeline(
 
                 if confidence < config.review_confidence:
                     x1, y1, x2, y2 = bbox
+                    frame_image = save_review_frame(frame_number, frame_bgr)
                     flagged_detections.append({
                         "frame_number": frame_number,
                         "timestamp": timestamp,
@@ -508,6 +531,8 @@ def run_pipeline(
                         "x2": round(x2, 2),
                         "y2": round(y2, 2),
                         "notes": "",
+                        "frame_image": frame_image,
+                        "reviewed": "",
                     })
     finally:
         cap.release()

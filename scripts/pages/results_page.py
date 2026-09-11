@@ -6,6 +6,7 @@ file shortcuts, Max-N example frames, and the summary charts panel.
 """
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -27,9 +28,12 @@ class ResultsPage(QWidget):
         self,
         on_run_another,
         on_projects,
+        on_review=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+
+        self._on_review = on_review
 
         self.outputs: dict[str, Path] = {}
         self.output_dir: Path | None = None
@@ -138,14 +142,14 @@ class ResultsPage(QWidget):
         )
         results_layout.addWidget(self.open_summary_btn)
 
-        self.open_flagged_btn = QPushButton("⚑   Open Review CSV")
-        self.open_flagged_btn.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        self.open_flagged_btn.clicked.connect(
-            lambda: self._open_result("flagged_csv")
-        )
-        results_layout.addWidget(self.open_flagged_btn)
+        # self.open_flagged_btn = QPushButton("⚑   Open Review CSV")
+        # self.open_flagged_btn.setCursor(
+        #     Qt.CursorShape.PointingHandCursor
+        # )
+        # self.open_flagged_btn.clicked.connect(
+        #     lambda: self._open_result("flagged_csv")
+        # )
+        # results_layout.addWidget(self.open_flagged_btn)
 
         self.open_folder_btn = QPushButton("📁   Open Output Folder")
         self.open_folder_btn.setCursor(
@@ -157,6 +161,29 @@ class ResultsPage(QWidget):
         results_layout.addWidget(self.open_folder_btn)
 
         root.addWidget(results_group)
+
+
+        # Review Low-Confidence Frames widget
+        self.review_group = QGroupBox("Review Low-Confidence Frames")
+        review_layout = QVBoxLayout(self.review_group)
+        review_layout.setSpacing(10)
+
+        caption = QLabel(
+            "Review each frame that the model was unsure about to confirm or "
+            "correct each prediction."
+        )
+        caption.setWordWrap(True)
+        review_layout.addWidget(caption)
+
+        self.review_btn = QPushButton("🔎   Start Review")
+        self.review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.review_btn.clicked.connect(self._open_review)
+        review_layout.addWidget(self.review_btn)
+
+        root.addWidget(self.review_group) 
+
+
+
 
         # ----------------------------------------------------
         # Max-N example frames
@@ -317,9 +344,9 @@ class ResultsPage(QWidget):
         self.open_summary_btn.setEnabled(
             "summary_csv" in outputs and outputs["summary_csv"].exists()
         )
-        self.open_flagged_btn.setEnabled(
-            "flagged_csv" in outputs and outputs["flagged_csv"].exists()
-        )
+        # self.open_flagged_btn.setEnabled(
+        #     "flagged_csv" in outputs and outputs["flagged_csv"].exists()
+        # )
         self.open_folder_btn.setEnabled(output_dir.exists())
 
         # Show the saved top Max-N example frames, if available.
@@ -442,6 +469,23 @@ class ResultsPage(QWidget):
         path = self.outputs.get(key)
         if path:
             open_path(path)
+
+    @staticmethod
+    def _csv_has_rows(path: Path) -> bool:
+        """True if a CSV file exists and has at least one data row."""
+        if not path.exists():
+            return False
+        try:
+            with path.open(newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                next(reader, None)  # header
+                return next(reader, None) is not None
+        except OSError:
+            return False
+
+    def _open_review(self) -> None:
+        if self._on_review:
+            self._on_review(self.outputs, self.output_dir)
 
     def _open_output_folder(self) -> None:
         if self.output_dir:

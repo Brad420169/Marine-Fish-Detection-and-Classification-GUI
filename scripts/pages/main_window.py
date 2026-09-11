@@ -24,6 +24,7 @@ from pipeline import RunConfig
 from worker import PipelineWorker
 from project_manager import Project, RunRecord
 from pages.results_page import ResultsPage
+from pages.review_page import ReviewPage
 
 
 class MainWindow(QMainWindow):
@@ -233,8 +234,14 @@ class MainWindow(QMainWindow):
         self.results_page = ResultsPage(
             on_run_another=self._show_detection_page,
             on_projects=self._back_to_projects,
+            on_review=self._open_review,
         )
         self.pages.addWidget(self.results_page)
+
+        # Review page (low-confidence detection review)
+
+        self.review_page = ReviewPage(on_back=self._show_results_page)
+        self.pages.addWidget(self.review_page)
 
     # Navigation
 
@@ -363,6 +370,19 @@ class MainWindow(QMainWindow):
             model_name=record.model_name,
             output_dir=output_dir,
         )
+        self.pages.setCurrentWidget(self.results_page)
+
+    def _open_review(self, outputs: dict, output_dir: Path) -> None:
+        """Launch the low-confidence review page for the current results."""
+        self.review_page.load_run(
+            flagged_csv=outputs.get("flagged_csv"),
+            output_dir=output_dir,
+            video_path=outputs.get("video"),
+        )
+        self.pages.setCurrentWidget(self.review_page)
+
+    def _show_results_page(self) -> None:
+        """Return from the review page to Results."""
         self.pages.setCurrentWidget(self.results_page)
 
     # Run Detection
