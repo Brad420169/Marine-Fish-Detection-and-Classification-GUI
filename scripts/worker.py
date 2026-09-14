@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import time
 
-import torch
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from pipeline import RunConfig, run_pipeline
+from inference_device import select_device
 
 
 class PipelineWorker(QThread):
@@ -53,11 +53,10 @@ class PipelineWorker(QThread):
 
     def run(self) -> None:
         try:
-            if torch.cuda.is_available():
-                device_name = torch.cuda.get_device_name(0)
-                self.device.emit(f"CUDA — {device_name}")
-            else:
-                self.device.emit("CPU")
+            self.log.emit("Checking inference device...")
+            self.config.device, description = select_device(self.config.device)
+            self.device.emit(description)
+            self.log.emit(f"Inference device: {description}")
 
             self._start_time = time.perf_counter()
 

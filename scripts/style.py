@@ -43,6 +43,14 @@ QTableCornerButton::section { background: #0c354f; border: none; }
 QListWidget::item { padding: 9px; border-radius: 5px; }
 QListWidget#projectList::item { min-height: 48px; padding: 4px; }
 QListWidget::item:selected { background: #006fba; }
+/* File and folder browsers use model views, not QListWidget/QTableWidget. */
+QFileDialog QAbstractItemView { background: #052338; alternate-background-color: #0b3047; color: #e8f5ff; border: 1px solid #176789; selection-background-color: #086996; selection-color: #ffffff; }
+QFileDialog QAbstractItemView::item:hover { background: #0c4262; }
+QFileDialog QAbstractItemView::item:selected { background: #086996; color: #ffffff; }
+QFileDialog QToolButton { background: #092a41; color: #effaff; border: 1px solid #267aa0; border-radius: 4px; padding: 4px; }
+QFileDialog QToolButton:hover { background: #155376; border-color: #35cfff; }
+QFileDialog QToolButton:checked { background: #086996; border-color: #35cfff; }
+QFileDialog QToolButton:disabled { color: #64859b; border-color: #24485d; }
 QCheckBox { spacing: 8px; color: #d3edfc; }
 QCheckBox::indicator { width: 17px; height: 17px; border-radius: 4px; border: 1px solid #70a3bf; background: #082b40; }
 QCheckBox::indicator:checked { background: #082b40; border: 1px solid #70a3bf; }

@@ -13,6 +13,7 @@ print("Loading...", flush=True)
 
 import sys
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -26,6 +27,8 @@ if sys.platform == "win32":
 
 
 def main() -> None:
+    # Use Qt browse dialogs so the shared dark theme applies on every platform.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app = QApplication(sys.argv)
     # Matches marine-fish-gui.desktop, so Linux desktops tie the window to the
     # launcher instead of showing a second, generic icon beside the pinned one.

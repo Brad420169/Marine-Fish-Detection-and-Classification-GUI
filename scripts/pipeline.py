@@ -541,7 +541,7 @@ def run_pipeline(
 
     log("Writing CSV outputs...")
     (config.output_dir / "original_detections.json").write_text(
-        json.dumps({"fps": fps, "duration": video_duration,
+        json.dumps({"fps": fps, "duration": video_duration, "total_frames": frame_index,
                     "video": config.video_path.name,
                     "source_video": str(config.video_path.resolve()),
                     "frames": detection_records}), encoding="utf-8")

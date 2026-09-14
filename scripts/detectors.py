@@ -165,6 +165,9 @@ class RFDETRDetector(BaseDetector):
 
 # Factory
 def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
+    if device is None or device == "auto":
+        from inference_device import select_device
+        device, _ = select_device(device)
     suffix = weights_path.suffix.lower()
     if suffix == ".pt":
         return YOLODetector(weights_path, device=device)

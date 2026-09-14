@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
 )
 
 from review_summary import RefreshWorker
+from model_evaluation import confirm_review_frame, evaluate_run
+from pages.evaluation_page import EvaluationPage
 from paths import open_path
 from pipeline import format_timestamp
 from review_io import (ReviewVideoWorker, context_for, draw_review,
@@ -263,6 +265,8 @@ class ReviewPage(QWidget):
         self.refresh = self.button(actions,'Refresh Results',self.refresh_results)
         self.export = self.button(actions,'Regenerate reviewed video',self.regenerate)
         self.open_video = self.button(actions,'Open video',lambda:open_path(self.reviewed_video))
+        self.evaluate_button = self.button(actions,'Evaluate AI model',self.evaluate_model)
+        self.evaluate_button.setToolTip('Compare original predictions with saved reviews. Confirm every fish in a frame, including misses, before evaluating.')
         self.open_video.setEnabled(False)
         # Modified shortcuts avoid interfering with species completion or text editing.
         QShortcut(QKeySequence('Ctrl+Return'),self,activated=self.confirm_frame)
@@ -473,6 +477,7 @@ class ReviewPage(QWidget):
         self.previous.setEnabled(not self.worker and self.next_frame_number(-1)!=self.frame_number)
         self.skip.setEnabled(not self.worker and self.next_frame_number(1)!=self.frame_number)
         self.confirm.setEnabled(not self.worker and self.raw is not None)
+        self.evaluate_button.setEnabled(bool(self.path and self.root) and not self.worker)
         self.export.setEnabled(bool(self.video and self.video.exists() and self.rows) and not self.worker)
         self.review_only.setEnabled(bool(self.cap) and not self.worker)
 
@@ -734,7 +739,9 @@ class ReviewPage(QWidget):
         if self.worker or self.raw is None:return
         drafts=self.drafts();pending=self.pending_rows()
         if not drafts and not pending:
-            self.advance();return
+            if self.record_frame_completion():
+                self.advance()
+            return
         if any(not r['species'] for r in drafts if r['review_status']!='rejected'):
             QMessageBox.warning(self,'Species required','Choose or enter a species name, or cross the row out to drop it.');return
         if any(not self.annotations.cellWidget(i,0).currentText().strip() for i in range(len(self.pending))):
@@ -772,6 +779,9 @@ class ReviewPage(QWidget):
         self.rows=rows
         self.names=sorted(set(self.names)|{r['species'] for r in pending})
         self.refresh_flagged()
+        if not self.record_frame_completion():
+            self.show_frame()
+            return
         try:
             folder=self.root/'reviewed_frames';folder.mkdir(exist_ok=True)
             target=folder/f'frame_{self.frame_number:06d}.jpg'
@@ -781,6 +791,15 @@ class ReviewPage(QWidget):
             self.status.setText('Saved to review CSV and reviewed_frames. Click Refresh Results to apply these decisions to the summary.')
         except OSError as exc:self.status.setText(f'CSV saved; reviewed image failed: {exc}. You can confirm again to retry.')
         self.advance()
+
+    def record_frame_completion(self):
+        try:
+            confirm_review_frame(self.root, self.rows, self.frame_number)
+            return True
+        except (OSError, ValueError, KeyError) as exc:
+            QMessageBox.critical(self, 'Review completion not saved',
+                                 f'Evaluation completion could not be recorded: {exc}. Any saved detection edits are retained. Confirm this frame again to retry.')
+            return False
 
     def ensure_frame_image(self):
         """Relative path to this frame's raw image, saving it the first time a frame is annotated."""
@@ -797,6 +816,16 @@ class ReviewPage(QWidget):
         if not context.exists():
             context.write_text(json.dumps(self.frame_context()),encoding='utf-8')
         return relative
+
+    def evaluate_model(self):
+        if self.worker or not self.path or not self.root:
+            return
+        try:
+            report = evaluate_run(self.root, self.path)
+        except (OSError, ValueError, KeyError) as exc:
+            QMessageBox.information(self, 'Evaluation unavailable', str(exc))
+            return
+        EvaluationPage(report, self).exec()
 
     def refresh_results(self):
         if self.worker or not self.path:

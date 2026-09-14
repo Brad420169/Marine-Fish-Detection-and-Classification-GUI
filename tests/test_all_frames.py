@@ -99,13 +99,32 @@ class AllFramesTests(unittest.TestCase):
         self.page.navigate(-1)
         self.assertEqual(self.page.frame_number, 1)
 
-    def test_confirm_on_unflagged_frame_advances_without_saving(self):
+    def test_confirm_on_unflagged_frame_records_completion_without_changing_csv(self):
         before = self.csv.read_bytes()
         self.goto(5)
         self.assertEqual(self.page.current(), [])
         self.page.confirm_frame()
         self.assertEqual(self.page.frame_number, 6)
         self.assertEqual(self.csv.read_bytes(), before)
+        from model_evaluation import evaluate_run
+        report = evaluate_run(self.root, self.csv)
+        self.assertEqual(report['reviewed_frames'], 1)
+        self.assertIsNone(report['detection']['recall'])
+
+    def test_skip_does_not_confirm_frame_for_evaluation(self):
+        from model_evaluation import evaluate_run
+        self.goto(5)
+        self.page.navigate(1)
+        self.assertEqual(evaluate_run(self.root, self.csv)['reviewed_frames'], 0)
+
+    def test_evaluate_button_opens_saved_report(self):
+        self.page.confirm_frame()
+        with patch('pages.review_page.EvaluationPage') as dialog:
+            self.page.evaluate_button.click()
+        report = dialog.call_args.args[0]
+        self.assertEqual(report['reviewed_frames'], 1)
+        self.assertEqual(report['detection']['precision'], 1)
+        dialog.return_value.exec.assert_called_once()
 
     def test_drawn_box_is_pending_until_confirmed(self):
         before = self.csv.read_bytes()

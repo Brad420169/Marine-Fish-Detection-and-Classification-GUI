@@ -433,6 +433,14 @@ annotated video is retained under `.original_video/` in the run folder. Every
 regeneration starts from that backup and the saved review decisions. The baseline is retained internally for repeatable regeneration; there is no restore action in the GUI. The source input video is
 never modified. A failed regeneration leaves the current output video intact.
 
+### Evaluate the AI model
+
+Click **Evaluate AI model** beside **Open video** on the Review page. The dark evaluation view shows precision, recall, F1, correction counts and per-species scores, using original predictions and saved reviews. **Detection + species** requires both the fish and species to be correct; **Fish detection** treats a species correction as a detected fish. For example, detection recall of 0.91 means 9% of reviewed fish were not detected. A species correction contributes a false positive to the predicted species and a false negative to the corrected species.
+
+**Confirm & Next** records full-frame completion, including empty frames and unchanged confident predictions. Inspect every prediction, reject spurious or duplicate boxes, and add every missed fish before confirming. Turn off **Review frames only** to review the whole video. Partial reviews show provisional scores for their subset, not a full-video estimate. Older saved review images can establish provisional review coverage; reconfirm those frames to verify completion. Runs without original detections must be processed again before evaluation is available.
+
+Completion is stored in `review_completion.json` and tied to the original predictions and saved decisions. Later saved edits invalidate that frame's completion until it is reconfirmed. Evaluation does not change predictions or summary results. Counts are fish observations per frame, not unique fish; these are review-based precision/recall scores, not IoU or mAP measurements. Undefined scores display **N/A**.
+
 ## Updating
 
 To update the application, open PowerShell in the application folder and run:
@@ -557,6 +565,8 @@ Processing speed depends heavily on the available hardware.
 
 A compatible GPU can significantly improve detection performance. Systems without a compatible GPU can use CPU processing, but processing will generally be slower.
 
+The Windows/Linux environment includes CUDA-enabled PyTorch 2.7.1 with CUDA 12.6, including support for Pascal GPUs such as the GTX 1070. A working NVIDIA driver is required. Before each run, the app checks CUDA availability and executes a small GPU operation, then explicitly passes the selected device to inference. The processing status and log show the selected GPU or the reason for CPU fallback. GPU errors during model inference are reported rather than silently restarting on the CPU.
+
 ---
 
 ## Troubleshooting
@@ -639,4 +649,3 @@ The model weights included in this repository were trained by the author of this
 The application source code is licensed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
 The included model weights were trained using the Kona, Hawaii Dataset described above. The underlying training dataset is provided by ReefOSHawaii under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**.
-
