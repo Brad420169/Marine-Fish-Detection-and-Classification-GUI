@@ -46,9 +46,9 @@ class YOLODetector(BaseDetector):
         from ultralytics import YOLO
 
         self.model = YOLO(str(weights_path))
+        self.class_names = list(self.model.names.values())
         self.device = device
         self.tracker = tracker
-        self._started = False
 
     def infer(self, frame_bgr: np.ndarray, conf: float, iou: float) -> DetectionFrame:
         results = self.model.track(
@@ -114,13 +114,12 @@ class RFDETRDetector(BaseDetector):
         # checkpoints may not. Fall back to placeholder names rather than
         # crashing, and let the caller know via `class_names_missing`.
         names = list(self.model.class_names or [])
+        self.class_names = names
         self.class_names_missing = not names
-        self._fallback_names = names
 
         self.tracker = sv.ByteTrack()
         self.box_annotator = sv.BoxAnnotator()
         self.label_annotator = sv.LabelAnnotator()
-        self._sv = sv
 
     def infer(self, frame_bgr: np.ndarray, conf: float, iou: float) -> DetectionFrame:
         # RF-DETR is NMS-free by design, so `iou` has no equivalent here —

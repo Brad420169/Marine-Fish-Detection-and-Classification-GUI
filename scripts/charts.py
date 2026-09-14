@@ -28,14 +28,14 @@ _PALETTE = [
 
 
 def _theme_axes(ax: plt.Axes) -> None:
-    """Apply consistent light-theme styling to a matplotlib Axes."""
-    ax.set_facecolor("#FAFBFC")
-    ax.tick_params(colors="#52606D", labelsize=9)
-    ax.xaxis.label.set_color("#52606D")
-    ax.yaxis.label.set_color("#52606D")
-    ax.title.set_color("#003B70")
+    """Apply consistent ocean-theme styling to a matplotlib Axes."""
+    ax.set_facecolor("#0a3048")
+    ax.tick_params(colors="#b6d9ef", labelsize=9)
+    ax.xaxis.label.set_color("#b6d9ef")
+    ax.yaxis.label.set_color("#b6d9ef")
+    ax.title.set_color("#eef9ff")
     for spine in ax.spines.values():
-        spine.set_edgecolor("#D7E0E8")
+        spine.set_edgecolor("#31617b")
 
 
 def _read_summary_csv(csv_path: Path) -> list[dict]:
@@ -49,24 +49,9 @@ def _read_summary_csv(csv_path: Path) -> list[dict]:
     return rows
 
 
-def _timestamp_to_seconds(timestamp: str) -> float:
-    """Convert MM:SS or HH:MM:SS timestamp text to seconds."""
-    try:
-        parts = [float(p) for p in str(timestamp).strip().split(":")]
-        if len(parts) == 2:
-            minutes, seconds = parts
-            return minutes * 60 + seconds
-        if len(parts) == 3:
-            hours, minutes, seconds = parts
-            return hours * 3600 + minutes * 60 + seconds
-    except (TypeError, ValueError):
-        pass
-    return 0.0
-
-
 def build_charts(csv_path: Path) -> Figure | None:
     """
-    Build a 4x1 vertical figure of four charts from the summary CSV.
+    Build a 2x2 figure of four charts from the summary CSV.
     """
     rows = _read_summary_csv(csv_path)
     if not rows:
@@ -75,35 +60,36 @@ def build_charts(csv_path: Path) -> Figure | None:
     species      = [r["species"] for r in rows]
     max_n        = [int(r["max_n"]) for r in rows]
     max_n_time   = [r.get("max_n_timestamp", "") for r in rows]
-    obs_span     = [float(r["observation_span_seconds"]) for r in rows]
     total_dets   = [int(r["total_detections"]) for r in rows]
-    mean_conf    = [float(r["mean_confidence"]) for r in rows]
+    mean_conf    = [float(r["mean_confidence"] or 0) for r in rows]
     vis_span     = [float(r["visible_seconds"]) for r in rows]
-    first_seen   = [r.get("first_seen", "") for r in rows]
-    last_seen    = [r.get("last_seen", "") for r in rows]
-    video_length = max(
-        [float(r.get("video_duration_seconds", 0) or 0) for r in rows] or [0]
-    )
-
     n = len(species)
     colours = [_PALETTE[i % len(_PALETTE)] for i in range(n)]
 
-    fig = Figure(figsize=(15, 20), facecolor="#F4F7FA")
+    # Each chart pins its y-axis to one unit per species (inverting it at the same
+    # time) rather than letting matplotlib autoscale, which collapses onto the bars
+    # themselves when there is only one species and makes bar height meaningless.
+    # Bar height is in those same data units, so scale it down for a handful of
+    # species to keep bars a consistent thickness on screen instead of huge slabs.
+    bar_height = min(0.6, 0.15 * n)
+
+    fig = Figure(figsize=(14, 7), facecolor="#062438")
     fig.subplots_adjust(
-        hspace=0.58,
-        left=0.20,
-        right=0.98,
-        top=0.97,
-        bottom=0.055,
+        hspace=0.85,
+        wspace=0.65,
+        left=0.16,
+        right=0.96,
+        top=0.90,
+        bottom=0.12,
     )
 
     # ── 1. Max-N ────────────────────────────────────────────
-    ax1 = fig.add_subplot(4, 1, 1)
+    ax1 = fig.add_subplot(2, 2, 1)
     _theme_axes(ax1)
-    bars1 = ax1.barh(species, max_n, color=colours, edgecolor="white", height=0.6)
+    bars1 = ax1.barh(species, max_n, color=colours, edgecolor="white", height=bar_height)
     ax1.set_xlabel("Max fish in one frame")
     ax1.set_title("Peak Abundance (Max-N)", fontsize=11, fontweight="bold", pad=8)
-    ax1.invert_yaxis()
+    ax1.set_ylim(n - 0.5, -0.5)
     ax1.set_xlim(0, max(max_n) * 1.45 if max_n else 1)
     for bar, val, timestamp in zip(bars1, max_n, max_n_time):
         label = f"{val}  @ {timestamp}" if timestamp else str(val)
@@ -113,7 +99,7 @@ def build_charts(csv_path: Path) -> Figure | None:
             label,
             va="center",
             fontsize=8,
-            color="#52606D",
+            color="#b6d9ef",
         )
 
     # Explain the inline "@ timestamp" annotation without covering the bars.
@@ -127,49 +113,38 @@ def build_charts(csv_path: Path) -> Figure | None:
         loc="lower right",
         fontsize=7,
         frameon=False,
+        labelcolor="#b6d9ef",
         handlelength=0,
         handletextpad=0,
         borderaxespad=0.6,
     )
 
-    # ── 2. Observation span ──────────────────────────────────
-    # ax2 = fig.add_subplot(2, 2, 2)
-    # _theme_axes(ax2)
-    # bars2 = ax2.barh(species, obs_span, color=colours, edgecolor="white", height=0.6)
-    # ax2.set_xlabel("Seconds")
-    # ax2.set_title("Observation Span per Species", fontsize=11, fontweight="bold", pad=8)
-    # ax2.invert_yaxis()
-    # ax2.set_xlim(0, max(obs_span) * 1.18 if obs_span else 1)
-    # for bar, val in zip(bars2, obs_span):
-    #     ax2.text(bar.get_width() + max(obs_span) * 0.02, bar.get_y() + bar.get_height() / 2,
-    #              f"{val:.1f}s", va="center", fontsize=8, color="#52606D")
-
     # ── 3. Total detections ──────────────────────────────────
-    ax3 = fig.add_subplot(4, 1, 2)
+    ax3 = fig.add_subplot(2, 2, 2)
     _theme_axes(ax3)
-    bars3 = ax3.barh(species, total_dets, color=colours, edgecolor="white", height=0.6)
+    bars3 = ax3.barh(species, total_dets, color=colours, edgecolor="white", height=bar_height)
     ax3.set_xlabel("Detection count")
     ax3.set_title("Total Detections by Species", fontsize=11, fontweight="bold", pad=8)
-    ax3.invert_yaxis()
+    ax3.set_ylim(n - 0.5, -0.5)
     ax3.set_xlim(0, max(total_dets) * 1.18 if total_dets else 1)
     for bar, val in zip(bars3, total_dets):
         ax3.text(bar.get_width() + max(total_dets) * 0.02, bar.get_y() + bar.get_height() / 2,
-                 str(val), va="center", fontsize=8, color="#52606D")
+                 str(val), va="center", fontsize=8, color="#b6d9ef")
 
     # Visual chart
-    ax2 = fig.add_subplot(4, 1, 3)
+    ax2 = fig.add_subplot(2, 2, 3)
     _theme_axes(ax2)
-    bars2 = ax2.barh(species, vis_span, color=colours, edgecolor="white", height=0.6)
+    bars2 = ax2.barh(species, vis_span, color=colours, edgecolor="white", height=bar_height)
     ax2.set_xlabel("Seconds")
     ax2.set_title("Visible Span per Species", fontsize=11, fontweight="bold", pad=8)
-    ax2.invert_yaxis()
+    ax2.set_ylim(n - 0.5, -0.5)
     ax2.set_xlim(0, max(vis_span) * 1.18 if vis_span else 1)
     for bar, val in zip(bars2, vis_span):
         ax2.text(bar.get_width() + max(vis_span) * 0.02, bar.get_y() + bar.get_height() / 2,
-                 f"{val:.1f}s", va="center", fontsize=8, color="#52606D")
+                 f"{val:.1f}s", va="center", fontsize=8, color="#b6d9ef")
 
     # ── 4. Mean detection confidence ────────────────────────
-    ax4 = fig.add_subplot(4, 1, 4)
+    ax4 = fig.add_subplot(2, 2, 4)
     _theme_axes(ax4)
 
     conf_colours = [
@@ -197,20 +172,20 @@ def build_charts(csv_path: Path) -> Figure | None:
     ax4.set_yticklabels(species)
     ax4.set_xlabel("Mean confidence score")
     ax4.set_title("Mean Detection Confidence", fontsize=11, fontweight="bold", pad=30)
-    ax4.invert_yaxis()
+    ax4.set_ylim(n - 0.5, -0.5)
     ax4.set_xlim(0, 1.08)
 
     ax4.axvline(0.5, color="#C62828", linewidth=0.8, linestyle="--", alpha=0.6)
     ax4.axvline(0.7, color="#2E7D32", linewidth=0.8, linestyle="--", alpha=0.6)
 
-    for y, val in zip(y_pos, mean_conf):
+    for y, val, row in zip(y_pos, mean_conf, rows):
         ax4.text(
             val + 0.015,
             y,
-            f"{val:.2f}",
+            f"{val:.2f}" if row["mean_confidence"] else "N/A (manual)",
             va="center",
             fontsize=8,
-            color="#52606D",
+            color="#b6d9ef",
         )
 
     legend_patches = [
@@ -226,6 +201,7 @@ def build_charts(csv_path: Path) -> Figure | None:
         ncol=3,
         fontsize=7,
         frameon=False,
+        labelcolor="#b6d9ef",
         borderaxespad=0.0,
         columnspacing=1.4,
         handletextpad=0.5,

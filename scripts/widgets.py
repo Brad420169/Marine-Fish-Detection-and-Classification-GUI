@@ -10,7 +10,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
@@ -109,10 +110,10 @@ class VideoPathRow(PathRow):
         self.drop_label.setStyleSheet(
             """
             QLabel {
-                border: 2px solid #2E7D32;
+                border: 2px solid #54d6ae;
                 border-radius: 8px;
-                background-color: #F1FAF2;
-                color: #2E7D32;
+                background-color: #123e46;
+                color: #54d6ae;
                 font-size: 13px;
                 font-weight: 600;
             }
@@ -123,17 +124,17 @@ class VideoPathRow(PathRow):
         self.drop_label.setStyleSheet(
             """
             QLabel {
-                border: 2px dashed #AEBCC8;
+                border: 2px dashed #4885a5;
                 border-radius: 8px;
-                background-color: #F8FBFD;
-                color: #647585;
+                background-color: #0b3048;
+                color: #b0d1e6;
                 font-size: 13px;
                 font-weight: 500;
             }
             QLabel:hover {
                 border: 2px dashed #0072CE;
-                background-color: #EFF8FE;
-                color: #005EA8;
+                background-color: #134b65;
+                color: #41d4ff;
             }
             """
         )
@@ -145,8 +146,8 @@ class VideoPathRow(PathRow):
             QLabel {
                 border: 2px dashed #0072CE;
                 border-radius: 8px;
-                background-color: #E4F3FD;
-                color: #005EA8;
+                background-color: #164a62;
+                color: #41d4ff;
                 font-size: 13px;
                 font-weight: 600;
             }
@@ -377,9 +378,12 @@ class ProjectListRow(QWidget):
         self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         layout.addWidget(self.label, 1)
 
-        self.delete_btn = QPushButton("🗑")
+        self.delete_btn = QPushButton()
+        self.delete_btn.setIcon(QIcon(str(ROOT_DIR / "assets/trash.svg")))
+        self.delete_btn.setIconSize(QSize(18,18))
+        self.delete_btn.setAccessibleName(f"Delete project {project.name}")
         self.delete_btn.setToolTip(f"Delete {project.name}")
-        self.delete_btn.setFixedSize(30, 26)
+        self.delete_btn.setFixedSize(32, 32)
         self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_btn.setVisible(False)
         self.delete_btn.setStyleSheet(
@@ -387,17 +391,18 @@ class ProjectListRow(QWidget):
             QPushButton {
                 border: none;
                 background: transparent;
-                font-size: 15px;
+                min-width: 32px; max-width: 32px;
+                min-height: 32px; max-height: 32px;
                 padding: 0;
             }
             QPushButton:hover {
-                background-color: #FDECEC;
+                background-color: #572837;
                 border-radius: 4px;
             }
             """
         )
         self.delete_btn.clicked.connect(lambda: on_delete(project))
-        layout.addWidget(self.delete_btn)
+        layout.addWidget(self.delete_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def set_selected(self, selected: bool) -> None:
         self.delete_btn.setVisible(selected)

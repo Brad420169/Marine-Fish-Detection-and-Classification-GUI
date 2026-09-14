@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -45,22 +45,8 @@ class Project:
 
     def save(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
-        data = {
-            "name":    self.name,
-            "created": self.created,
-            "output_root": self.output_root,
-            "runs": [
-                {
-                    "run_number": r.run_number,
-                    "model_name": r.model_name,
-                    "timestamp":  r.timestamp,
-                    "output_dir": r.output_dir,
-                }
-                for r in self.runs
-            ],
-        }
         self.meta_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
+            json.dumps(asdict(self), indent=2), encoding="utf-8"
         )
 
     @classmethod

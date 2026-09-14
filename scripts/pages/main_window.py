@@ -12,11 +12,12 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QBoxLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget
 )
 
+from ocean_ui import OceanShell
 from paths import ICON_PATH
 from widgets import VideoPathRow, WeightsRow, LabeledSlider
 from charts import _read_summary_csv
@@ -25,21 +26,23 @@ from worker import PipelineWorker
 from project_manager import Project, RunRecord
 from pages.results_page import ResultsPage
 from pages.review_page import ReviewPage
+from pages.project_page import ProjectsPage
 
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, project: Project) -> None:
+    def __init__(self, project: Project | None = None) -> None:
         super().__init__()
 
         self.project = project
-        self.setWindowTitle(f"Marine Fish Detector  —  {project.name}")
+        self.setWindowTitle(f"Marine Fish Detector  —  {project.name}" if project
+                            else "Marine Fish Detector")
 
         if ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PATH)))
 
-        self.resize(1100, 800)
-        self.setMinimumWidth(700)
+        self.resize(1500, 940)
+        self.setMinimumSize(1100, 760)
 
         self.worker: PipelineWorker | None = None
         self.outputs: dict[str, Path] = {}
@@ -48,7 +51,12 @@ class MainWindow(QMainWindow):
         # Page navigation
 
         self.pages = QStackedWidget()
-        self.setCentralWidget(self.pages)
+
+        # Projects page — the landing page, and reachable again from the sidebar.
+
+        self.projects_page = ProjectsPage()
+        self.projects_page.opened.connect(self.open_project)
+        self.pages.addWidget(self.projects_page)
 
         # Detection page
 
@@ -74,58 +82,37 @@ class MainWindow(QMainWindow):
         root.setSpacing(12)
         root.setContentsMargins(16, 16, 16, 16)
 
-        # Header Area
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 4)
-
-        back_btn = QPushButton("←  Projects")
-        back_btn.setObjectName("backButton")
-        back_btn.setFixedWidth(110)
-        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        back_btn.clicked.connect(self._back_to_projects)
-        header_row.addWidget(back_btn)
-
-        header_center = QVBoxLayout()
-        header_center.setSpacing(2)
-
-        title = QLabel("Marine Fish Detector")
-        title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("color: #003B70;")
-        header_center.addWidget(title)
-
-        project_label = QLabel(f"Project: {project.name}    •    Created: {project.created}")
-        project_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        project_label.setStyleSheet("color: #6B7785; font-size: 11px; font-weight: 400;")
-        header_center.addWidget(project_label)
-
-        header_row.addLayout(header_center, 1)
-
-        header_spacer = QWidget()
-        header_spacer.setFixedWidth(110)
-        header_row.addWidget(header_spacer)
-
-        root.addLayout(header_row)
+        title = QLabel("Run Detection")
+        title.setObjectName("pageTitle")
+        root.addWidget(title)
+        subtitle = QLabel("Select your video and model, configure settings, and start detecting fish.")
+        subtitle.setObjectName("muted")
+        root.addWidget(subtitle)
+        self.input_cards = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.input_cards.setSpacing(14)
+        root.addLayout(self.input_cards)
 
         # Video Input Box
-        video_group = QGroupBox("Video Input")
+        video_group = QGroupBox("1. Video Input")
         video_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         video_layout = QVBoxLayout(video_group)
         self.video_row = VideoPathRow()
         video_layout.addWidget(self.video_row)
-        root.addWidget(video_group)
+        video_group.setMinimumHeight(220)
+        self.input_cards.addWidget(video_group,1)
 
         # Model Input Box
-        model_group = QGroupBox("Model Input")
+        model_group = QGroupBox("2. Model Input")
         model_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         model_layout = QVBoxLayout(model_group)
         self.weights_row = WeightsRow()
         model_layout.addWidget(self.weights_row)
-        root.addWidget(model_group)
+        model_group.setMinimumHeight(220)
+        self.input_cards.addWidget(model_group,1)
 
         # Settings Group
-        settings_group = QGroupBox("Settings")
-        settings_group.setMinimumHeight(135)
+        settings_group = QGroupBox("3. Detection Settings")
+        settings_group.setMinimumHeight(220)
         settings_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         settings_layout = QVBoxLayout(settings_group)
@@ -163,7 +150,7 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.conf_slider)
         settings_layout.addWidget(self.iou_slider)
         settings_layout.addWidget(self.review_conf_slider)
-        root.addWidget(settings_group)
+        self.input_cards.addWidget(settings_group,1)
 
         # Past Runs.  Keep this widget alive and refresh its contents so a
         # run that has just completed appears immediately when the user returns
@@ -175,31 +162,58 @@ class MainWindow(QMainWindow):
 
         progress_label = QLabel("Detection progress")
         progress_label.setStyleSheet(
-            "color: #52606D; font-size: 11px; font-weight: 600;"
+            "color: #b7d8ec; font-size: 11px; font-weight: 600;"
         )
-        root.addWidget(progress_label)
+        progress_group = QGroupBox("Detection Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        root.addWidget(progress_group)
+        progress_label.hide()
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("Ready")
-        root.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_bar)
 
         self.processing_stats = QLabel(
             "Device: —    •    Speed: —    •    Elapsed: 00:00    •    Remaining: —"
         )
         self.processing_stats.setStyleSheet(
-            "color: #6B7785; font-size: 11px;"
+            "color: #afd0e3; font-size: 11px;"
         )
         self.processing_stats.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-        root.addWidget(self.processing_stats)
+        progress_layout.addWidget(self.processing_stats)
 
         # Processing Console Box
         status_label = QLabel("Processing status")
-        status_label.setStyleSheet("color: #52606D; font-size: 11px; font-weight: 600;")
-        root.addWidget(status_label)
+        status_label.setStyleSheet("color: #b7d8ec; font-size: 11px; font-weight: 600;")
+        status_label.hide()
+        status_group = QGroupBox("Processing Status")
+        status_layout = QVBoxLayout(status_group)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(14)
+        status_row.addWidget(status_group,3)
+        tips = QGroupBox("Detection Tips")
+        tips_layout = QVBoxLayout(tips)
+        # A real list, not "• " prefixes, so wrapped lines hang under the text.
+        tips_text = QLabel('<ul style="-qt-list-indent:0; margin-left:8px; margin-top:0px;">'
+                           '<li style="margin-bottom:10px;">Balance confidence thresholds to catch most fish '
+                           'without too many false positives.</li>'
+                           '<li style="margin-bottom:10px;">Adjust the Flag review setting to control which '
+                           'detections are flagged for manual review.</li>'
+                           '<li style="margin-bottom:10px;">Use a detector model trained on your specific data '
+                           'or reef environment.</li>'
+                           '<li>Some detection runs may be slow if your system does not have a GPU.</li>'
+                           '</ul>')
+        tips_text.setTextFormat(Qt.TextFormat.RichText)
+        tips_text.setWordWrap(True)
+        tips_text.setObjectName('muted')
+        tips_layout.addWidget(tips_text)
+        tips_layout.addStretch()
+        status_row.addWidget(tips,1)
+        root.addLayout(status_row,1)
 
         self.log_box = QPlainTextEdit()
         self.log_box.setObjectName("statusConsole")
@@ -208,7 +222,7 @@ class MainWindow(QMainWindow):
         self.log_box.setFont(QFont("Consolas", 10))
         self.log_box.setPlaceholderText("Waiting for detection to start...")
         self.log_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        root.addWidget(self.log_box, 1)
+        status_layout.addWidget(self.log_box, 1)
 
         # Action Buttons
         btn_row = QHBoxLayout()
@@ -241,7 +255,40 @@ class MainWindow(QMainWindow):
         # Review page (low-confidence detection review)
 
         self.review_page = ReviewPage(on_back=self._show_results_page)
+        self.review_page.results_refreshed.connect(self._reload_reviewed_results)
         self.pages.addWidget(self.review_page)
+        self.shell = OceanShell(self.pages, project, self._navigate_shell)
+        self.setCentralWidget(self.shell)
+        self.pages.currentChanged.connect(self._sync_sidebar)
+        self.pages.setCurrentWidget(self.detection_page if project else self.projects_page)
+        self._sync_sidebar()
+
+    def _sync_sidebar(self, *_args):
+        current = self.pages.currentWidget()
+        for key, page in [('projects',self.projects_page),('detection',self.detection_page),
+                          ('review',self.review_page),('results',self.results_page)]:
+            self.shell.buttons[key].setChecked(current is page)
+        # Everything past Projects needs a project open, and results need a finished run.
+        available = bool(self.project) and bool(self.results_page.outputs)
+        self.shell.buttons['detection'].setEnabled(bool(self.project))
+        self.shell.buttons['review'].setEnabled(available)
+        self.shell.buttons['results'].setEnabled(available)
+
+    def _navigate_shell(self, target):
+        if self.pages.currentWidget() is self.review_page:
+            if self.review_page.worker or not self.review_page.discard_ok():
+                self._sync_sidebar()
+                return
+        if target == 'projects':
+            self._back_to_projects()
+        elif target == 'detection' and self.project:
+            self.pages.setCurrentWidget(self.detection_page)
+        elif target == 'results':
+            self.pages.setCurrentWidget(self.results_page)
+        elif target == 'review' and self.pages.currentWidget() is not self.review_page:
+            self._open_review(self.results_page.outputs,self.results_page.output_dir)
+        self._sync_sidebar()
+
 
     # Navigation
 
@@ -253,7 +300,7 @@ class MainWindow(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
 
-        for record in reversed(self.project.runs):
+        for record in reversed(self.project.runs if self.project else []):
             label = (
                 f"Run {record.run_number}  •  "
                 f"{record.model_name}  •  {record.timestamp}"
@@ -269,7 +316,7 @@ class MainWindow(QMainWindow):
             )
             self.runs_layout.addWidget(btn)
 
-        self.runs_group.setVisible(bool(self.project.runs))
+        self.runs_group.setVisible(bool(self.project and self.project.runs))
 
     def _show_detection_page(self) -> None:
         """Return from results to the detection setup page."""
@@ -294,11 +341,17 @@ class MainWindow(QMainWindow):
         self.log_box.clear()
         self.outputs = {}
 
-    def _back_to_projects(self) -> None:
-        # Deferred import: project_page.py imports MainWindow back to launch
-        # a project, so this avoids a circular import at module load time.
-        from pages.project_page import ProjectPage
+    def open_project(self, project: Project) -> None:
+        """Adopt a project chosen on the Projects page and move to detection setup."""
+        self.project = project
+        self.setWindowTitle(f"Marine Fish Detector  —  {project.name}")
+        self.shell.set_project(project)
+        self.outputs = {}
+        self._refresh_runs_list()
+        self._show_detection_page()
+        self._sync_sidebar()
 
+    def _back_to_projects(self) -> None:
         if self.worker and self.worker.isRunning():
             answer = QMessageBox.question(
                 self,
@@ -311,23 +364,15 @@ class MainWindow(QMainWindow):
 
             self.worker.cancel()
 
-        self.project_page = ProjectPage()
-        self.project_page.show()
-        self.close()
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if not hasattr(self, '_content_ratio'):
-            w = self.width()
-            cw = self._detection_central.width()
-            if w > 0 and cw > 0:
-                self._content_ratio = cw / w
+        # A run may have added detections since the list was last built.
+        self.projects_page.refresh()
+        self.pages.setCurrentWidget(self.projects_page)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if hasattr(self, '_content_ratio'):
-            max_w = int(self.width() * self._content_ratio)
-            self._detection_central.setMaximumWidth(max_w)
+        if hasattr(self, 'input_cards'):
+            direction = QBoxLayout.Direction.LeftToRight if self.width() >= 1450 else QBoxLayout.Direction.TopToBottom
+            self.input_cards.setDirection(direction)
 
     def _open_run(self, record: RunRecord) -> None:
         output_dir = Path(record.output_dir)
@@ -381,6 +426,14 @@ class MainWindow(QMainWindow):
         )
         self.pages.setCurrentWidget(self.review_page)
 
+    def _reload_reviewed_results(self) -> None:
+        page = self.results_page
+        outputs = {key: value for key, value in page.outputs.items() if not key.startswith("maxn_frame_")}
+        for index, path in enumerate(sorted((page.output_dir / "maxn_examples").glob("*.jpg"))[:2], 1):
+            outputs[f"maxn_frame_{index}"] = path
+        page.set_results(outputs, self.project.name,
+                         page.model_label.text().removeprefix("Model: "), page.output_dir)
+
     def _show_results_page(self) -> None:
         """Return from the review page to Results."""
         self.pages.setCurrentWidget(self.results_page)
@@ -388,6 +441,8 @@ class MainWindow(QMainWindow):
     # Run Detection
 
     def _run(self) -> None:
+        if not self.project:
+            QMessageBox.warning(self,"No project open","Open a project from the Projects page first.");return
         video = self.video_row.get_path()
         weights = self.weights_row.get_path()
         missing = [

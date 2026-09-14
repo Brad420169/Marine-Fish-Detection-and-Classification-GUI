@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 
 from paths import ICON_PATH
 from style import APP_STYLE
-from pages.project_page import ProjectPage
+from pages.main_window import MainWindow
 
 if sys.platform == "win32":
     import ctypes
@@ -27,6 +27,10 @@ if sys.platform == "win32":
 
 def main() -> None:
     app = QApplication(sys.argv)
+    # Matches marine-fish-gui.desktop, so Linux desktops tie the window to the
+    # launcher instead of showing a second, generic icon beside the pinned one.
+    # Ignored on Windows and macOS, which identify the app by the lines above.
+    app.setDesktopFileName("marine-fish-gui")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(APP_STYLE)
@@ -36,7 +40,7 @@ def main() -> None:
     else:
         print(f"Icon not found: {ICON_PATH}")
 
-    window = ProjectPage()
+    window = MainWindow()
     window.show()
     sys.exit(app.exec())
 

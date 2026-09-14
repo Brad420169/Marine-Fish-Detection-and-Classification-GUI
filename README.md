@@ -120,7 +120,8 @@ Name=Marine Fish Detection GUI
 Comment=Launch the Marine Fish Detection and Classification GUI
 Exec=bash -c "cd '$PROJECT_DIR' && ./launch_gui.sh"
 Icon=$ICON_PNG
-Terminal=true
+Terminal=false
+StartupWMClass=marine-fish-gui
 Categories=Utility;
 EOF
 
@@ -197,6 +198,15 @@ Double-click the **Marine Fish Detection GUI** icon on your Desktop.
 - **Linux:** the first time, you may be asked if you trust the shortcut — click **"Trust and Launch"**. If double-clicking does nothing, right-click the icon and choose **"Allow Launching"**, then try again.
 
 That's it — every future launch is just this same double-click.
+
+### Pinning it to the taskbar (optional)
+
+- **Windows:** launch the app, then right-click its taskbar icon and choose **Pin to taskbar**.
+- **Linux (GNOME/Ubuntu):** open **Show Applications**, right-click **Marine Fish Detection GUI** and choose **Pin to Dash**. From a terminal instead:
+  ```bash
+  gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed "s/]$/, 'marine-fish-gui.desktop']/")"
+  ```
+- **macOS:** launch the app, then right-click its Dock icon and choose **Options → Keep in Dock**.
 
 ## Using the Application
 
@@ -331,6 +341,97 @@ Results can also be exported as a summary figure.
 You can reopen previous detection runs from the **Past Runs** section without reprocessing the video.
 
 ---
+## Review Step - Correct AI Predictions and Missed Detections
+
+### Refreshing results after review
+
+After saving decisions with **Confirm & Next**, click **Refresh Results** on the
+review page. The application rebuilds `track_summary.csv`, the Results charts,
+and available Max-N examples from the original per-frame detections plus saved
+review decisions. It also writes `reviewed_detections.csv`, containing all
+remaining detections, and preserves the initial summary as
+`track_summary_original.csv`.
+
+Each row in the detection table has a **✓** and a **✕** in its Decision column.
+The tick is set by default, so a frame that looks right can be accepted as a
+whole with **Confirm & Next**; correct a species first and the tick keeps it.
+The cross drops the detection: a model detection is recorded as rejected and
+removed from the refreshed statistics, while a manual annotation is deleted from
+the review CSV outright. Crossed rows are struck out and their boxes disappear
+from the frame straight away, but nothing is written until **Confirm & Next**,
+so a cross can be undone with the tick.
+
+Confirmed species corrections replace the original label. Detections on frames
+you have not reviewed yet retain their original prediction. Confidence values
+remain the model's scores;
+reviewing does not rerun tracking or create new track IDs. Refreshing repeatedly
+is safe: each refresh starts from `original_detections.json`, not the previously
+refreshed summary.
+
+Older runs without `original_detections.json` must be rerun before their summaries
+can be refreshed accurately. If source images are unavailable, missing Max-N
+examples are omitted rather than showing stale examples. Video regeneration is a
+separate action using **Regenerate reviewed video**.
+
+### Reviewing flagged frames or the whole video
+
+The review page can work through flagged frames only or through every frame of
+the video, controlled by the **Review frames only** tick box (on by default):
+
+- **Ticked** — **Previous**, **Skip**, **Confirm & Next** and the left/right
+  arrow keys move between flagged frames, so you only see detections the model
+  was unsure about.
+- **Unticked** — the same controls step one video frame at a time, so you can
+  work through footage the model was confident about, or missed entirely.
+
+Either way the counter reads the absolute position in the video, for example
+`Frame 412 / 9000`, followed by the timestamp and how many flagged frames have
+been reviewed. Click it to jump straight to any frame number. Frames are read
+from the original source video, so unflagged frames are available without
+rerunning detection. If the source video cannot be found, only flagged frames
+can be reviewed and the tick box is disabled.
+
+### Adding missed fish during review
+
+Drag a box directly on the frame around any fish the model missed. Each box
+appears in the **Annotations** panel on the left, where you choose its species
+or **Remove** it, and is shown enlarged on the right just like a flagged
+detection, so you can check what you have boxed. A plain click without dragging
+still selects a detection instead.
+
+Pressing **Enter** in a box's species field saves it straight away: the box
+leaves the Annotations panel and appears in the detection table below as a
+confirmed manual annotation, without moving off the frame, so several missed
+fish can be boxed and named one after another. Boxes you leave in the panel are
+saved with the rest of the frame's decisions when you click **Confirm & Next**
+instead; leaving the frame first prompts before discarding them.
+
+Small or distant fish are easier to box accurately zoomed in. **Ctrl+scroll** on
+the frame zooms about the mouse pointer, up to 12×, keeping whatever is under the
+pointer in place; the current level is shown next to the frame counter. Once
+zoomed, **scroll** pans up and down and **Shift+scroll** pans sideways, and
+Ctrl+scrolling back out returns to the whole frame. Zoom only changes what you
+see: boxes are always recorded in full-resolution frame coordinates, and the
+level is kept as you move between frames so you can watch one area across the
+video.
+
+Manual rows have `annotation_source=manual` and a stable `annotation_id`. Their
+confidence and track ID are blank: manual fish increase detection counts and
+Max-N after **Refresh Results**, but do not invent tracks or model confidence.
+Mean confidence uses model detections only; species with only manual annotations
+show no model confidence. **Regenerate reviewed video** includes saved manual
+boxes. To remove a saved manual annotation, cross it out and confirm the frame.
+
+Annotating a frame that was not flagged saves that frame's image and detection
+context alongside the flagged ones, so it joins the review CSV and is rebuilt
+correctly by **Refresh Results** and **Regenerate reviewed video**.
+
+
+Regenerating a reviewed video now **replaces the annotated output video** at its
+existing path, so the Results page opens the updated version. The first original
+annotated video is retained under `.original_video/` in the run folder. Every
+regeneration starts from that backup and the saved review decisions. The baseline is retained internally for repeatable regeneration; there is no restore action in the GUI. The source input video is
+never modified. A failed regeneration leaves the current output video intact.
 
 ## Updating
 
@@ -341,48 +442,6 @@ git pull
 git lfs pull
 pixi install
 ```
----
-
-## Troubleshooting
-
- 
-### `git` is not recognised / not found
-**Windows & Linux** Close and reopen the terminal. If the problem continues, confirm it is installed with `git --version`.
- 
-### `pixi` is not recognised / not found
-Close and reopen PowerShell/Terminal, then check:
-```
-pixi --version
-```
-**Linux:** if it still isn't found, `pixi` may not be on your `PATH` for non-login shells. Run `which pixi` to find its location, then use that full path when running `pixi` commands (or add it to `~/.bashrc`).
- 
-### Model files did not download
-Open PowerShell/Terminal in the application folder and run:
-```
-git lfs install
-git lfs pull
-```
- 
-### The application does not launch
-Open PowerShell/Terminal in the application folder and run:
-```
-pixi install
-pixi run GUI
-```
-Any startup errors will then be displayed in the terminal.
- 
-**Linux only:** if double-clicking the Desktop shortcut does nothing but running `./launch_gui.sh` from a terminal works, this is a known Linux desktop-file quirk, not a bug in the app. Right-click the shortcut → **Allow Launching**, and make sure it's marked executable:
-```bash
-chmod +x ~/Desktop/marine-fish-gui.desktop
-```
-
-### Detection is slow
-
-Processing speed depends heavily on the available hardware.
-
-A compatible GPU can significantly improve detection performance. Systems without a compatible GPU can use CPU processing, but processing will generally be slower.
-
----
 
 ## Project Structure
 
@@ -492,9 +551,46 @@ As long as your class returns a correctly shaped `DetectionFrame`, everything do
 
 4. **Drop your weights file into `models/`** (or use the "Add model weights…" button in the GUI) and select it from the Weights dropdown — the rest of the pipeline (detection loop, CSV export, Max-N frame extraction, summary charts) runs unmodified.
 
-### Notes for tracker-free models
+### Detection is slow
+
+Processing speed depends heavily on the available hardware.
+
+A compatible GPU can significantly improve detection performance. Systems without a compatible GPU can use CPU processing, but processing will generally be slower.
 
 ---
+
+## Troubleshooting
+
+ 
+### `git` is not recognised / not found
+**Windows & Linux** Close and reopen the terminal. If the problem continues, confirm it is installed with `git --version`.
+ 
+### `pixi` is not recognised / not found
+Close and reopen PowerShell/Terminal, then check:
+```
+pixi --version
+```
+**Linux:** if it still isn't found, `pixi` may not be on your `PATH` for non-login shells. Run `which pixi` to find its location, then use that full path when running `pixi` commands (or add it to `~/.bashrc`).
+ 
+### Model files did not download
+Open PowerShell/Terminal in the application folder and run:
+```
+git lfs install
+git lfs pull
+```
+ 
+### The application does not launch
+Open PowerShell/Terminal in the application folder and run:
+```
+pixi install
+pixi run GUI
+```
+Any startup errors will then be displayed in the terminal.
+ 
+**Linux only:** if double-clicking the Desktop shortcut does nothing but running `./launch_gui.sh` from a terminal works, this is a known Linux desktop-file quirk, not a bug in the app. Right-click the shortcut → **Allow Launching**, and make sure it's marked executable:
+```bash
+chmod +x ~/Desktop/marine-fish-gui.desktop
+```
 
 ## Development
 
@@ -543,3 +639,4 @@ The model weights included in this repository were trained by the author of this
 The application source code is licensed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
 The included model weights were trained using the Kona, Hawaii Dataset described above. The underlying training dataset is provided by ReefOSHawaii under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**.
+

@@ -1,680 +1,862 @@
-"""
-pages/review_page.py
----------------------
-Interactive low-confidence review page: steps through every flagged
-detection frame one at a time. Each frame shows the raw image with the
-flagged detection box(es) drawn on it. Clicking a box (or its matching
-field below) lets the user type the correct species name; pressing
-Enter with nothing changed confirms the AI's prediction was right.
-
-Frame source:
-    - Preferred: a raw frame saved by pipeline.py under
-      "<output_dir>/review_frames/frame_NNNNNN.jpg" at run time.
-    - Fallback (older runs saved before this existed): seek the
-      annotated output video for that frame number. This still works,
-      but the model's own baked-in box/label will be visible under the
-      review overlay.
-"""
-from __future__ import annotations
-
-import csv
+"""Explicit review decisions, inline annotation, crop inspection and video export."""
+import json
+from uuid import uuid4
 from pathlib import Path
-from typing import Any
 
 import cv2
-
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QImage, QPixmap
+from PyQt6.QtCore import QEvent, QRect, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QCompleter, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+    QGroupBox, QApplication, QSizePolicy, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QCompleter, QDialog, QHBoxLayout, QLabel,
+    QInputDialog, QMessageBox, QPushButton, QRubberBand, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
 )
 
-from pipeline import FLAGGED_FIELDS
-
-# BGR colours (OpenCV order) for drawing detection boxes; rotated per
-# detection index within a frame. The selected/editing box always uses
-# the highlight colour instead.
-_BOX_PALETTE_BGR = [
-    (206, 114, 0),
-    (0, 150, 136),
-    (46, 125, 46),
-    (0, 119, 232),
-    (158, 63, 123),
-]
-_HIGHLIGHT_BGR = (0, 165, 255)
+from review_summary import RefreshWorker
+from paths import open_path
+from pipeline import format_timestamp
+from review_io import (ReviewVideoWorker, context_for, draw_review,
+                       load_review_rows, load_species_names, save_rows)
 
 
-class ClickableImageLabel(QLabel):
-    """QLabel that reports click position in its own local coordinates."""
+class ReviewComboBox(QComboBox):
+    def eventFilter(self, obj, event):
+        if (obj is self.lineEdit() and event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Tab
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier):
+            completion = self.completer().currentCompletion()
+            if self.lineEdit().text() and completion:
+                self.setEditText(completion)
+                self.lineEdit().setCursorPosition(len(completion))
+            # Keep focus here so Enter saves the annotation, never activates Remove.
+            return True
+        return super().eventFilter(obj,event)
 
-    clicked_at = pyqtSignal(float, float)
+    def wheelEvent(self, event):
+        # Let the containing panel scroll without changing this selection.
+        event.ignore()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+
+class ImageLabel(QLabel):
+    """A click selects a detection and a drag boxes a missed fish, both in frame
+    coordinates. Ctrl+wheel zooms about the cursor so small fish can be boxed
+    accurately; once zoomed, the wheel pans (with Shift for sideways)."""
+    DRAG = 5
+    MAX_ZOOM = 12.0
+    STEP = 1.25
+    PAN = 0.15
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.band = QRubberBand(QRubberBand.Shape.Rectangle, self)
+        self.origin = None
+        self.on_click = None
+        self.on_draw = None
+        self.on_zoom = None
+        self.frame = None
+        self.zoom = 1.0
+        self.centre = (.5,.5)
+        self.region = (0,0,1,1)
 
-    def mousePressEvent(self, event) -> None:
-        pos = event.position()
-        self.clicked_at.emit(pos.x(), pos.y())
-        super().mousePressEvent(event)
+    def reset_view(self):
+        self.zoom = 1.0; self.centre = (.5,.5)
+
+    def set_frame(self, frame):
+        self.frame = frame
+        self.redraw()
+
+    def clear_frame(self):
+        self.frame = None; self.clear()
+
+    def visible_region(self):
+        """The part of the frame currently on screen, clamped inside it."""
+        h,w = self.frame.shape[:2]
+        vw,vh = w/self.zoom, h/self.zoom
+        cx,cy = self.centre
+        return min(max(cx*w-vw/2,0),w-vw), min(max(cy*h-vh/2,0),h-vh), vw, vh
+
+    def redraw(self):
+        if self.frame is None:
+            return
+        x0,y0,vw,vh = self.visible_region()
+        self.region = (x0,y0,vw,vh)
+        h,w = self.frame.shape[:2]
+        self.centre = ((x0+vw/2)/w,(y0+vh/2)/h)
+        view = self.frame[round(y0):round(y0+vh),round(x0):round(x0+vw)]
+        if view.size:
+            self.setPixmap(pixmap(view).scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatio,
+                                               Qt.TransformationMode.SmoothTransformation))
+
+    def ready(self):
+        return self.frame is not None and bool(self.pixmap() and self.pixmap().width())
+
+    def anchor(self, point):
+        """Where a label point falls within the displayed pixmap, as fractions."""
+        pix = self.pixmap()
+        return ((point.x()-(self.width()-pix.width())/2)/pix.width(),
+                (point.y()-(self.height()-pix.height())/2)/pix.height())
+
+    def fraction(self, point):
+        """Where a label point falls within the whole frame, allowing for zoom."""
+        ax,ay = self.anchor(point)
+        x0,y0,vw,vh = self.region
+        h,w = self.frame.shape[:2]
+        return (x0+ax*vw)/w,(y0+ay*vh)/h
+
+    def wheelEvent(self, event):
+        steps = event.angleDelta().y()/120 if self.ready() else 0
+        if not steps:
+            event.ignore();return
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            zoom = min(self.MAX_ZOOM,max(1.0,self.zoom*self.STEP**steps))
+            if zoom != self.zoom:
+                # Keep whatever is under the cursor under the cursor.
+                ax,ay = self.anchor(event.position())
+                fx,fy = self.fraction(event.position())
+                h,w = self.frame.shape[:2]
+                self.zoom = zoom
+                vw,vh = w/zoom, h/zoom
+                self.centre = ((fx*w-ax*vw+vw/2)/w,(fy*h-ay*vh+vh/2)/h)
+                self.redraw()
+                if self.on_zoom: self.on_zoom()
+            event.accept();return
+        if self.zoom > 1.0:
+            cx,cy = self.centre
+            _,_,vw,vh = self.region
+            h,w = self.frame.shape[:2]
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.centre = (cx-steps*vw*self.PAN/w,cy)
+            else:
+                self.centre = (cx,cy-steps*vh*self.PAN/h)
+            self.redraw();event.accept();return
+        event.ignore()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton or not self.ready():
+            return
+        self.origin = event.position().toPoint()
+        self.band.setGeometry(QRect(self.origin, self.origin)); self.band.show()
+
+    def mouseMoveEvent(self, event):
+        if self.origin is not None:
+            self.band.setGeometry(QRect(self.origin, event.position().toPoint()).normalized())
+
+    def mouseReleaseEvent(self, event):
+        if self.origin is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        start, end = self.origin, event.position().toPoint()
+        self.origin = None; self.band.hide()
+        if not self.ready():
+            return
+        if abs(end.x()-start.x()) < self.DRAG and abs(end.y()-start.y()) < self.DRAG:
+            if self.on_click: self.on_click(*self.fraction(end))
+            return
+        if self.on_draw:
+            (x1,y1), (x2,y2) = self.fraction(start), self.fraction(end)
+            self.on_draw(min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2))
+
+
+def pixmap(frame):
+    rgb = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+    h,w,_ = rgb.shape
+    return QPixmap.fromImage(QImage(rgb.data,w,h,rgb.strides[0],QImage.Format.Format_RGB888).copy())
 
 
 class ReviewPage(QWidget):
-    """Frame-by-frame reviewer for low-confidence detections."""
-
-    # Fixed height of the detections panel, so its footprint never changes
-    # with the number of detections in a frame (see __init__).
-    _DETECTION_PANEL_HEIGHT = 120
-
-    def __init__(self, on_back, parent: QWidget | None = None) -> None:
+    results_refreshed = pyqtSignal()
+    def __init__(self,on_back,parent=None):
         super().__init__(parent)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-        self._on_back = on_back
-
-        # Run state
-        self._flagged_csv: Path | None = None
-        self._output_dir: Path | None = None
-        self._video_path: Path | None = None
-        self._video_cap: cv2.VideoCapture | None = None
-
-        self._rows: list[dict[str, Any]] = []
-        self._frame_row_indices: dict[int, list[int]] = {}
-        self._frames: list[int] = []
-        self._known_species: list[str] = []
-
-        self._current_index = 0
-        self._selected_local_index = -1
-        self._species_edits: list[QLineEdit] = []
-
-        self._full_pixmap: QPixmap | None = None
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        outer.addWidget(self.scroll, 1)
-
-        content = QWidget()
-        self.scroll.setWidget(content)
-
-        root = QVBoxLayout(content)
-        root.setContentsMargins(18, 24, 18, 16)
-        root.setSpacing(14)
-
-        title = QLabel("Review Low-Confidence Detections")
+        self.on_back = on_back
+        self.path = None; self.root = None; self.video = None; self.cap = None
+        self.rows = []; self.fields = []; self.names = []; self.pending = []; self.decisions = []
+        self.flagged_frames = []; self.detections_by_frame = {}
+        self.frame_number = 1; self.total_frames = 0; self.fps = 25.0; self.selected = 0
+        self.raw = None; self.canvas = None; self.worker = None; self.loading = False
+        self._layout_timer = QTimer(self)
+        self._layout_timer.setSingleShot(True)
+        self._layout_timer.timeout.connect(self.render)
+        QApplication.instance().aboutToQuit.connect(self.shutdown)
+        QApplication.instance().installEventFilter(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16,12,16,12)
+        root.setSpacing(10)
+        title = QLabel('Review Detections'); title.setObjectName('pageTitle')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        title.setStyleSheet("color: #003B70;")
         root.addWidget(title)
+        hint = QLabel('Inspect detections, draw boxes around missed fish, then confirm. Ctrl + scroll to zoom; scroll to pan.')
+        hint.setWordWrap(True); hint.setAlignment(Qt.AlignmentFlag.AlignCenter); root.addWidget(hint)
+        self.progress = QLabel()
+        self.progress.setTextFormat(Qt.TextFormat.RichText)
+        self.progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.progress.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self.progress.linkActivated.connect(self.jump_to_frame)
+        self.progress.setToolTip('Click to jump to any video frame by number.')
+        root.addWidget(self.progress)
+        mode = QHBoxLayout(); root.addLayout(mode)
+        self.review_only = QCheckBox('Review frames only'); self.review_only.setChecked(True)
+        self.review_only.setToolTip('On: Previous, Skip, Confirm & Next and the arrow keys move between flagged frames.\n'
+                                    'Off: they step one video frame at a time, so you can find fish the model missed entirely.')
+        self.review_only.toggled.connect(lambda _checked: self.update_controls())
+        mode.addStretch(); mode.addWidget(self.review_only); mode.addStretch()
+        images = QHBoxLayout()
+        panel = QGroupBox("Annotations"); panel.setFixedWidth(210)
+        panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(10,18,10,10)
+        panel_title = QLabel('Annotations'); panel_title.setStyleSheet('font-weight: bold;')
+        panel_title.hide()
+        panel_hint = QLabel('<ul style="-qt-list-indent:0; margin-left:8px; margin-top:0px;">'
+                            '<li>Annotate missed fish detection</li>'
+                            '<li>Select species</li>'
+                            '<li>Enter and Confirm &amp; Next to save</li>'
+                            '<li>Remove latest annotation with CTRL+Z</li>'
+                            '</ul>')
+        panel_hint.setTextFormat(Qt.TextFormat.RichText)
+        panel_hint.setWordWrap(True); panel_layout.addWidget(panel_hint)
+        self.annotations = QTableWidget(0,2)
+        self.annotations.setHorizontalHeaderLabels(['Species',''])
+        self.annotations.setColumnWidth(0,115)
+        self.annotations.setColumnWidth(1,38)
+        self.annotations.verticalHeader().hide()
+        self.annotations.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.annotations.cellClicked.connect(self.select_annotation)
+        self.annotations.horizontalHeader().setStretchLastSection(True)
+        panel_layout.addWidget(self.annotations,1)
+        images.addWidget(panel)
+        self.image = ImageLabel(); self.image.setMinimumSize(360,220)
+        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
+        self.image.on_click = self.select_box
+        self.image.on_draw = self.draw_box
+        self.image.on_zoom = self.update_controls
+        self.crop = QLabel('Select a fish to preview')
+        self.crop.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.crop.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
+        for label in (self.image,self.crop):
+            label.setStyleSheet('background: #021b2b; color: #b1d5e9; border: 1px solid #24779b; border-radius: 7px;')
+        preview = QGroupBox('Zoom / Preview'); preview.setFixedWidth(210)
+        preview_layout = QVBoxLayout(preview)
+        preview_layout.addWidget(self.crop,1)
+        preview_hint = QLabel('Ctrl + scroll to zoom\nScroll to pan • Shift for sideways')
+        preview_hint.setObjectName('muted'); preview_hint.setWordWrap(True)
+        preview_layout.addWidget(preview_hint)
+        images.addWidget(self.image,1); images.addWidget(preview)
+        root.addLayout(images,1)
+        self.button(preview_layout,'Full resolution',self.zoom)
+        self.table = QTableWidget(0,4)
+        self.table.setHorizontalHeaderLabels(['Original AI prediction','Confidence','Reviewed species','Decision'])
+        self.table.setToolTip("Resolved rows are hidden. Click a box on the image to reopen its species editor.")
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.setFixedHeight(140)
+        self.table.cellClicked.connect(self.select_row)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        detections_panel = QGroupBox("Detections in this frame")
+        detections_layout = QVBoxLayout(detections_panel)
+        detections_layout.addWidget(self.table)
+        root.addWidget(detections_panel)
+        self.status = QLabel(); self.status.setWordWrap(True); root.addWidget(self.status)
+        nav = QHBoxLayout(); root.addLayout(nav)
+        self.back = self.button(nav,'Back to Results',self.leave)
+        self.previous = self.button(nav,'Previous',lambda:self.navigate(-1))
+        self.skip = self.button(nav,'Skip',lambda:self.navigate(1))
+        self.confirm = self.button(nav,'Confirm && Next  →',self.confirm_frame)
+        self.confirm.setObjectName('confirmButton')
+        actions = QHBoxLayout(); root.addLayout(actions)
+        self.refresh = self.button(actions,'Refresh Results',self.refresh_results)
+        self.export = self.button(actions,'Regenerate reviewed video',self.regenerate)
+        self.open_video = self.button(actions,'Open video',lambda:open_path(self.reviewed_video))
+        self.open_video.setEnabled(False)
+        # Modified shortcuts avoid interfering with species completion or text editing.
+        QShortcut(QKeySequence('Ctrl+Return'),self,activated=self.confirm_frame)
+        QShortcut(QKeySequence('Alt+Right'),self,activated=lambda:self.navigate(1))
+        QShortcut(QKeySequence('Alt+Left'),self,activated=lambda:self.navigate(-1))
 
-        hint = QLabel(
-            "Click a box (or its field below) to correct a wrong species name. "
-            "Press Enter or Next if the AI got it right — it just had low confidence."
-        )
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #6B7785; font-size: 12px;")
-        root.addWidget(hint)
+    @staticmethod
+    def button(layout,text,action):
+        button = QPushButton(text); button.clicked.connect(action); layout.addWidget(button); return button
 
-        self.progress_label = QLabel("")
-        self.progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_label.setStyleSheet(
-            "color: #52606D; font-size: 12px; font-weight: 600;"
-        )
-        root.addWidget(self.progress_label)
+    def load_run(self,flagged_csv,output_dir,video_path):
+        if self.cap:
+            self.cap.release(); self.cap = None
+        self.path = Path(flagged_csv) if flagged_csv else None
+        self.root = Path(output_dir) if output_dir else None
+        self.video = Path(video_path) if video_path else None
+        self.rows=[]; self.fields=[]; self.pending=[]
+        self.detections_by_frame={}; self.total_frames=0; self.fps=25.0
+        self.image.reset_view()
+        try:
+            if not self.path or not self.root:
+                raise ValueError('No review CSV is available.')
+            self.rows, self.fields = load_review_rows(self.path)
+            names_file=self.root/'species_names.json'
+            self.names=load_species_names(self.root,self.rows)
+            self.status.setText('Saved decisions are loaded. Older runs may have an incomplete species list.' if not names_file.exists() else 'Ready. Changes are saved when you confirm the frame.')
+        except (OSError,ValueError,KeyError) as exc:
+            self.rows=[]; self.names=[]
+            QMessageBox.critical(self,'Cannot load review',str(exc))
+        self.refresh_flagged()
+        self.open_source()
+        if not self.total_frames:
+            # No readable video: flagged frames are all that can be reviewed.
+            self.total_frames = max(self.flagged_frames, default=0)
+            self.review_only.setChecked(True)
+        self.frame_number = next((n for n in self.flagged_frames
+                                  if any(r['review_status'] not in ('confirmed','rejected')
+                                         for r in self.rows if r['frame_number']==n)),
+                                 self.flagged_frames[0] if self.flagged_frames else 1)
+        self.reviewed_video=self.video
+        self.open_video.setEnabled(bool(self.reviewed_video and self.reviewed_video.exists()))
+        self.show_frame()
 
-        # Empty state
-        self.empty_label = QLabel(
-            "No low-confidence detections were flagged for this run."
-        )
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet(
-            "color: #8A99A6; font-style: italic; padding: 40px;"
-        )
-        self.empty_label.hide()
-        root.addWidget(self.empty_label)
-
-        # Image
-        self.image_label = ClickableImageLabel()
-        self.image_label.setMinimumHeight(260)
-        # Ignored (not Expanding): a QLabel's sizeHint tracks whatever
-        # pixmap is currently set on it. With Expanding, the layout would
-        # partly size the label off that sizeHint, which itself was just
-        # set from the label's own last size — a feedback loop that grows
-        # the image a little on every frame change. Ignored tells the
-        # layout to never consult the label's sizeHint/minimumSizeHint, so
-        # it always just fills the space actually available.
-        self.image_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored
-        )
-        self.image_label.setStyleSheet(
-            """
-            QLabel {
-                background-color: #11161D;
-                border: 1px solid #D7E0E8;
-                border-radius: 6px;
-                color: #8A99A6;
-            }
-            """
-        )
-        self.image_label.clicked_at.connect(self._on_image_clicked)
-        root.addWidget(self.image_label, 1)
-
-        # Detections list for the current frame.
-        #
-        # This panel is deliberately a FIXED height: its rows vary with how
-        # many detections a frame has, and if it were allowed to grow, a
-        # frame with three boxes would leave less room for the image than a
-        # frame with one — which is what made some frames render smaller
-        # than others. A fixed footprint means the image always gets the
-        # same amount of space, so every frame is displayed at one size.
-        # Extra rows scroll inside the panel instead of pushing it taller.
-        self.detections_group = QGroupBox("Detections in this frame")
-        self.detections_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
-        )
-        group_layout = QVBoxLayout(self.detections_group)
-        group_layout.setContentsMargins(8, 12, 8, 8)
-        group_layout.setSpacing(0)
-
-        self._rows_scroll = QScrollArea()
-        self._rows_scroll.setWidgetResizable(True)
-        self._rows_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self._rows_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._rows_scroll.setFixedHeight(self._DETECTION_PANEL_HEIGHT)
-        group_layout.addWidget(self._rows_scroll)
-
-        rows_container = QWidget()
-        self._rows_layout = QVBoxLayout(rows_container)
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(6)
-        self._rows_layout.addStretch()
-        self._rows_scroll.setWidget(rows_container)
-
-        root.addWidget(self.detections_group)
-
-        # Fixed nav bar at bottom
-        nav_widget = QWidget()
-        nav_widget.setStyleSheet(
-            "background-color: #F4F7FA; border-top: 1px solid #D7E0E8;"
-        )
-        nav_outer = QVBoxLayout(nav_widget)
-        nav_outer.setContentsMargins(0, 0, 0, 0)
-        nav_outer.setSpacing(0)
-
-        top_nav = QHBoxLayout()
-        top_nav.setContentsMargins(32, 12, 32, 6)
-        top_nav.setSpacing(12)
-
-        back_btn = QPushButton("←  Back to Results")
-        back_btn.setObjectName("backButton")
-        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        back_btn.clicked.connect(self._back_to_results)
-        top_nav.addWidget(back_btn)
-        top_nav.addStretch()
-
-        self.prev_btn = QPushButton("←  Previous")
-        self.prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.prev_btn.setToolTip("Previous frame (Left arrow)")
-        self.prev_btn.clicked.connect(self._go_prev)
-        top_nav.addWidget(self.prev_btn)
-
-        self.next_btn = QPushButton("Next  →")
-        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.next_btn.setToolTip("Next frame (Right arrow or Enter)")
-        self.next_btn.clicked.connect(self._go_next)
-        # Set directly rather than via objectName("primaryButton") — that
-        # relies on the app-wide stylesheet cascading correctly onto this
-        # button, which wasn't happening reliably here.
-        self.next_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #0072CE;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                font-weight: 700;
-                padding: 4px 16px;
-            }
-            QPushButton:hover { background-color: #005FAE; }
-            QPushButton:pressed { background-color: #004B87; }
-            QPushButton:disabled { background-color: #9DBCD5; color: #EEF3F7; }
-            """
-        )
-        top_nav.addWidget(self.next_btn)
-
-        nav_outer.addLayout(top_nav)
-
-        outer.addWidget(nav_widget)
-
-    # ------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------
-
-    def load_run(
-        self,
-        flagged_csv: Path | None,
-        output_dir: Path | None,
-        video_path: Path | None,
-    ) -> None:
-        """Load a run's flagged detections for review."""
-
-        if self._video_cap is not None:
-            self._video_cap.release()
-            self._video_cap = None
-
-        self._flagged_csv = Path(flagged_csv) if flagged_csv else None
-        self._output_dir = Path(output_dir) if output_dir else None
-        self._video_path = Path(video_path) if video_path else None
-
-        self._rows = []
-        if self._flagged_csv and self._flagged_csv.exists():
+    def open_source(self):
+        """Open the raw source video so any frame can be reviewed, not just flagged ones."""
+        source = self.video
+        original = self.root/'original_detections.json' if self.root else None
+        if original and original.exists():
             try:
-                with self._flagged_csv.open(newline="", encoding="utf-8") as f:
-                    for raw_row in csv.DictReader(f):
-                        row = dict(raw_row)
-                        row.setdefault("frame_image", "")
-                        row.setdefault("reviewed", "")
-                        try:
-                            row["frame_number"] = int(float(row.get("frame_number", 0)))
-                        except (TypeError, ValueError):
-                            continue
-                        self._rows.append(row)
-            except OSError:
-                pass
+                data = json.loads(original.read_text(encoding='utf-8'))
+            except (OSError,ValueError):
+                return
+            self.fps = float(data.get('fps') or self.fps)
+            self.detections_by_frame = {f['frame_number']: f['detections'] for f in data.get('frames',[])}
+            candidate = Path(data.get('source_video',''))
+            if candidate.is_file():
+                source = candidate
+        if not (source and source.is_file()):
+            return
+        cap = cv2.VideoCapture(str(source))
+        if not cap.isOpened():
+            cap.release(); return
+        self.cap = cap
+        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if not self.detections_by_frame:
+            self.fps = cap.get(cv2.CAP_PROP_FPS) or self.fps
 
-        self._frame_row_indices = {}
-        for idx, row in enumerate(self._rows):
-            self._frame_row_indices.setdefault(row["frame_number"], []).append(idx)
-        self._frames = sorted(self._frame_row_indices.keys())
+    def refresh_flagged(self):
+        self.flagged_frames = sorted({r['frame_number'] for r in self.rows})
 
-        self._known_species = sorted({
-            r["species"] for r in self._rows if r.get("species")
-        })
+    def current(self):
+        return [r for r in self.rows if r['frame_number']==self.frame_number]
 
-        self._current_index = 0
-        self._selected_local_index = -1
+    def frame_context(self):
+        if self.detections_by_frame:
+            return self.detections_by_frame.get(self.frame_number,[])
+        return context_for(self.root,self.frame_number)
 
-        has_frames = bool(self._frames)
-        self.empty_label.setVisible(not has_frames)
-        self.image_label.setVisible(has_frames)
-        self.detections_group.setVisible(has_frames)
-        self.prev_btn.setVisible(has_frames)
-        self.next_btn.setVisible(has_frames)
-        self.progress_label.setVisible(has_frames)
+    def timestamp(self):
+        rows=self.current()
+        if rows and rows[0].get('timestamp'):
+            return rows[0]['timestamp']
+        return format_timestamp((self.frame_number-1)/self.fps) if self.fps else ''
 
-        if has_frames:
-            self._load_current_frame()
+    def next_frame_number(self,step):
+        """The frame Previous/Skip/Confirm & Next lands on, per the Review frames only mode."""
+        if self.review_only.isChecked():
+            if step>0:
+                later=[n for n in self.flagged_frames if n>self.frame_number]
+                return later[0] if later else self.frame_number
+            earlier=[n for n in self.flagged_frames if n<self.frame_number]
+            return earlier[-1] if earlier else self.frame_number
+        if not self.total_frames:
+            return self.frame_number
+        return max(1,min(self.total_frames,self.frame_number+step))
 
-    # ------------------------------------------------------------
-    # Frame navigation
-    # ------------------------------------------------------------
-
-    def _current_frame_number(self) -> int | None:
-        if 0 <= self._current_index < len(self._frames):
-            return self._frames[self._current_index]
+    def load_frame_image(self):
+        rows=self.current()
+        if rows and rows[0].get('frame_image'):
+            saved=self.root/rows[0]['frame_image']
+            if saved.is_file():
+                image=cv2.imread(str(saved))
+                if image is not None:
+                    return image
+        if self.cap:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES,self.frame_number-1)
+            ok,frame=self.cap.read()
+            if ok:
+                return frame
         return None
 
-    def _load_current_frame(self) -> None:
-        self._selected_local_index = -1
-        self._rebuild_detection_rows()
-        self._render_current_frame()
-        self._update_progress_label()
-        self.setFocus()
+    def show_frame(self):
+        self.loading=True
+        self.table.setRowCount(0); self.annotations.setRowCount(0)
+        self.pending=[]; self.canvas=None
+        rows=self.current()
+        # A row is confirmed unless it is crossed out, so an untouched frame can be
+        # accepted wholesale with Confirm & Next.
+        self.decisions=['rejected' if row['review_status']=='rejected' else 'confirmed' for row in rows]
+        for i,row in enumerate(rows):
+            self.add_table_row(i,row)
+            self.table.setRowHidden(i,row.get("reviewed")=="yes")
+        self.table.setColumnWidth(0,230); self.table.setColumnWidth(1,90); self.table.setColumnWidth(2,230)
+        self.selected=0
+        self.raw=self.load_frame_image()
+        self.update_controls()
+        self.loading=False; self.render()
 
-    def _commit_current_frame(self) -> None:
-        frame_number = self._current_frame_number()
-        if frame_number is None:
+    def add_table_row(self,index,row):
+        """Build one row of the detection table. Rows are only ever appended, so the
+        indexes captured by the row's own controls stay correct."""
+        self.table.insertRow(index)
+        for col,text in enumerate(('Manual annotation' if row.get('annotation_source')=='manual' else row['original_species'],
+                                   str(row['confidence']) if row['confidence'] != '' else 'N/A')):
+            self.table.setCellWidget(index,col,QLabel(text))
+        species=self.species_box(row['species'])
+        self.table.setCellWidget(index,2,species)
+        self.table.setCellWidget(index,3,self.decision_widget(index))
+        species.activated.connect(lambda _, i=index: self.select_row(i,2))
+        species.currentTextChanged.connect(self.render)
+        self.style_decision(index)
+
+    # The app-wide sheet gives every QPushButton a 30px minimum and wide padding, which
+    # squashes a small square button, so these opt out of all of it explicitly.
+    # The size has to be set here rather than with setFixedSize: applying a stylesheet
+    # re-derives the widget's size constraints from the sheet and discards it.
+    DECISION_STYLE = ('QPushButton{{min-width:26px;max-width:26px;min-height:20px;max-height:20px;'
+                      'padding:0px;font-size:14px;font-weight:700;'
+                      'border:1px solid #39718e;border-radius:4px;'
+                      'background:#0b3048;color:#93b8cb;}}'
+                      'QPushButton:hover{{border:1px solid {colour};color:{colour};}}'
+                      'QPushButton:checked{{background:{colour};border:1px solid {colour};color:#FFFFFF;}}')
+
+    def decision_widget(self,index):
+        """Tick to confirm the row, cross to drop the detection."""
+        holder=QWidget();layout=QHBoxLayout(holder)
+        layout.setContentsMargins(8,4,8,4);layout.setSpacing(7)
+        group=QButtonGroup(holder);group.setExclusive(True)
+        for symbol,status,tip,colour in (('✓','confirmed','Confirm this species','#36b88e'),
+                                         ('✕','rejected','Not a fish — drop this detection','#dd6675')):
+            button=QPushButton(symbol);button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(tip)
+            button.setStyleSheet(self.DECISION_STYLE.format(colour=colour))
+            button.setChecked(self.decisions[index]==status)
+            # clicked, not toggled: only a real click should change the decision.
+            button.clicked.connect(lambda _, i=index, s=status: self.set_decision(i,s))
+            group.addButton(button);layout.addWidget(button)
+        holder.caption=QLabel();layout.addWidget(holder.caption);layout.addStretch()
+        return holder
+
+    def set_decision(self,index,status):
+        self.decisions[index]=status
+        self.selected=index;self.table.selectRow(index)
+        self.style_decision(index);self.render()
+
+    def style_decision(self,index):
+        """Strike out a crossed row so it reads as removed before it is saved."""
+        rejected=self.decisions[index]=='rejected'
+        for col in (0,1):
+            label=self.table.cellWidget(index,col)
+            font=label.font();font.setStrikeOut(rejected);label.setFont(font)
+            label.setStyleSheet('color: #98A2AD;' if rejected else '')
+        self.table.cellWidget(index,2).setEnabled(not rejected)
+        caption=self.table.cellWidget(index,3).caption
+        manual=self.current()[index].get('annotation_source')=='manual'
+        caption.setText(('Annotation deleted' if manual else 'Removed — not a fish') if rejected else 'Confirmed')
+        caption.setStyleSheet(f"color: {'#dd6675' if rejected else '#36b88e'};")
+
+    def species_box(self,text=''):
+        species=ReviewComboBox(); species.setEditable(True); species.addItems(self.names)
+        species.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        species.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        species.completer().setFilterMode(Qt.MatchFlag.MatchContains)
+        species.completer().setCompletionMode(QCompleter.CompletionMode.InlineCompletion)
+        species.lineEdit().installEventFilter(species)
+        if text:species.setCurrentText(text)
+        else:species.setCurrentIndex(-1)
+        return species
+
+    def update_controls(self):
+        complete=sum(all(r['review_status'] in ('confirmed','rejected') for r in self.rows if r['frame_number']==n) for n in self.flagged_frames)
+        flagged=' • flagged' if self.frame_number in self.flagged_frames else ''
+        zoom=f' • {self.image.zoom:.1f}× zoom' if self.image.zoom>1 else ''
+        self.progress.setText(
+            f'<a href="jump" style="color: #46d8ff;">Frame {self.frame_number} / {self.total_frames}</a> • {self.timestamp()}{flagged}{zoom}'
+            f' • {complete} of {len(self.flagged_frames)} flagged frames reviewed')
+        self.previous.setEnabled(not self.worker and self.next_frame_number(-1)!=self.frame_number)
+        self.skip.setEnabled(not self.worker and self.next_frame_number(1)!=self.frame_number)
+        self.confirm.setEnabled(not self.worker and self.raw is not None)
+        self.export.setEnabled(bool(self.video and self.video.exists() and self.rows) and not self.worker)
+        self.review_only.setEnabled(bool(self.cap) and not self.worker)
+
+    def drafts(self):
+        result=[]
+        for i,row in enumerate(self.current()):
+            copy=dict(row);copy['species']=self.table.cellWidget(i,2).currentText().strip()
+            copy['review_status']=self.decisions[i];result.append(copy)
+        return result
+
+    def pending_rows(self):
+        """Boxes drawn on this frame but not yet written to the review CSV."""
+        result=[]
+        for i,box in enumerate(self.pending):
+            species=self.annotations.cellWidget(i,0).currentText().strip()
+            result.append(dict(zip(('x1','y1','x2','y2'),box),species=species or f'New box {i+1}',
+                               review_status='confirmed',annotation_source='manual'))
+        return result
+
+    def draw_box(self,x1,y1,x2,y2):
+        if self.raw is None or self.worker:
             return
+        h,w=self.raw.shape[:2]
+        box=[round(max(0,min(w,x1*w)),2),round(max(0,min(h,y1*h)),2),
+             round(max(0,min(w,x2*w)),2),round(max(0,min(h,y2*h)),2)]
+        if box[2]-box[0]<2 or box[3]-box[1]<2:
+            return
+        index=len(self.pending)
+        self.pending.append(box)
+        self.annotations.insertRow(index)
+        species=self.species_box()
+        species.currentTextChanged.connect(self.render)
+        # Rows shift as boxes are committed or removed, so look the row up by widget.
+        species.activated.connect(lambda: self.select_annotation(self.annotation_row(species)))
+        species.lineEdit().returnPressed.connect(lambda: self.commit_box(self.annotation_row(species)))
+        self.annotations.setCellWidget(index,0,species)
+        remove=QPushButton('×')
+        remove.setToolTip('Remove this pending annotation')
+        remove.setStyleSheet('padding: 0; min-width: 24px; min-height: 28px;')
+        remove.clicked.connect(lambda: self.remove_box(remove))
+        self.annotations.setCellWidget(index,1,remove)
+        self.annotations.scrollToBottom()
+        # Show the new box enlarged on the right, as a selected detection would be.
+        self.selected=self.table.rowCount()+index
+        self.annotations.selectRow(index)
+        self.render()
 
-        row_indices = self._frame_row_indices.get(frame_number, [])
-        changed = False
+    def annotation_row(self,widget):
+        """Which Annotations row a control currently belongs to, or -1 if it is gone."""
+        for index in range(self.annotations.rowCount()):
+            if widget in (self.annotations.cellWidget(index,0),self.annotations.cellWidget(index,1)):
+                return index
+        return -1
 
-        for idx, edit in zip(row_indices, self._species_edits):
-            row = self._rows[idx]
-            original_species = row.get("species", "")
-            new_species = edit.text().strip()
+    def remove_box(self,button):
+        index=self.annotation_row(button)
+        if index<0:return
+        # Deleting the row destroys its controls, whose dying signals would otherwise
+        # redraw from a half-updated table.
+        self.loading=True
+        self.annotations.removeRow(index)
+        self.pending.pop(index)
+        self.selected=min(self.selected,max(0,self.table.rowCount()+len(self.pending)-1))
+        self.loading=False
+        self.render()
 
-            if new_species and new_species != original_species:
-                if not row.get("notes"):
-                    row["notes"] = f"AI predicted: {original_species}"
-                row["species"] = new_species
-                row["reviewed"] = "yes"
-                changed = True
-            elif row.get("reviewed") != "yes":
-                row["reviewed"] = "yes"
-                changed = True
+    def undo_annotation(self):
+        """Remove the newest unsaved box on this frame, without touching saved rows."""
+        if self.worker or not self.pending:
+            return
+        self.remove_box(self.annotations.cellWidget(len(self.pending)-1,1))
+        self.status.setText('Last drawn annotation removed. Ctrl+Z undoes remaining unsaved boxes.')
 
-        if changed:
-            self._write_csv()
-
-    def _write_csv(self) -> None:
-        if not self._flagged_csv:
+    def commit_box(self,index):
+        """Save one drawn box immediately, so pressing Enter moves it straight into the
+        reviewed-species table instead of waiting for Confirm & Next."""
+        if self.worker or index<0 or self.raw is None:
+            return
+        species=self.annotations.cellWidget(index,0).currentText().strip()
+        if not species:
+            QMessageBox.warning(self,'Species required','Choose or type a species name for this box.');return
+        if species not in self.names and QMessageBox.question(self,'Unknown species',
+                f'"{species}" is not in the available species list. Save it anyway?') != QMessageBox.StandardButton.Yes:
             return
         try:
-            with self._flagged_csv.open("w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=FLAGGED_FIELDS)
-                writer.writeheader()
-                writer.writerows(self._rows)
-        except OSError:
-            pass
+            image=self.ensure_frame_image()
+        except OSError as exc:
+            QMessageBox.critical(self,'Annotation not saved',str(exc));return
+        new={key:'' for key in self.fields}
+        new.update(frame_number=self.frame_number,timestamp=self.timestamp(),species=species,
+                   confidence='',track_id='',original_species='',annotation_source='manual',
+                   annotation_id=str(uuid4()),review_status='confirmed',reviewed='yes',
+                   notes='Manually annotated',frame_image=image)
+        new.update(dict(zip(('x1','y1','x2','y2'),self.pending[index])))
+        rows=self.rows+[new]
+        try:save_rows(self.path,rows,self.fields)
+        except OSError as exc:
+            QMessageBox.critical(self,'Annotation not saved',str(exc));return
+        # Move the box from the Annotations panel into the table as one atomic step:
+        # the two are briefly inconsistent, and dying widgets emit as they go.
+        self.loading=True
+        self.annotations.removeRow(index);self.pending.pop(index)
+        self.rows=rows
+        self.names=sorted(set(self.names)|{species})
+        self.refresh_flagged()
+        position=len(self.current())-1
+        self.decisions.append('confirmed')
+        self.add_table_row(position,new)
+        self.selected=position;self.table.selectRow(position)
+        self.loading=False
+        self.status.setText(f'Saved "{species}" on frame {self.frame_number}. '
+                            'Click Refresh Results to apply it to the summary, charts and Max-N.')
+        self.update_controls();self.render()
 
-    def _go_next(self) -> None:
-        self._commit_current_frame()
-        if self._current_index < len(self._frames) - 1:
-            self._current_index += 1
-            self._load_current_frame()
+    def all_rows(self):
+        """Saved detections on this frame, then boxes drawn but not yet confirmed."""
+        return self.drafts()+self.pending_rows()
+
+    def render(self,*args):
+        if self.loading:return
+        if self.raw is None:
+            self.image.clear_frame()
+            self.image.setText('No image available.' if self.total_frames else 'No flagged detections.')
+            self.crop.clear();return
+        rows=self.all_rows()
+        self.canvas=draw_review(self.raw,rows,self.selected,self.frame_context())
+        self.image.set_frame(self.canvas)
+        if 0<=self.selected<len(rows):
+            row=rows[self.selected];h,w=self.raw.shape[:2]
+            x1,y1,x2,y2=[round(float(row[k])) for k in ('x1','y1','x2','y2')]
+            crop=self.raw[max(0,y1-25):min(h,y2+25),max(0,x1-25):min(w,x2+25)]
+            if crop.size:self.crop.setPixmap(pixmap(crop).scaled(max(1,self.crop.width()),max(1,self.crop.height()),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
         else:
-            self._back_to_results()
+            self.crop.clear();self.crop.setText('Selected fish')
 
-    def _go_prev(self) -> None:
-        self._commit_current_frame()
-        if self._current_index > 0:
-            self._current_index -= 1
-            self._load_current_frame()
+    def select_row(self,row,col):
+        self.selected=row;self.render()
 
-    def _back_to_results(self) -> None:
-        self._commit_current_frame()
-        if self._video_cap is not None:
-            self._video_cap.release()
-            self._video_cap = None
-        self._on_back()
+    def select_annotation(self,row,_col=0):
+        self.selected=self.table.rowCount()+row;self.render()
 
-    def _update_progress_label(self) -> None:
-        total = len(self._frames)
-        current = self._current_index + 1 if total else 0
+    def edit_detection(self, index):
+        """Reopen a resolved row when its on-image annotation is selected."""
+        self.table.setRowHidden(index,False)
+        self.selected=index
+        self.table.selectRow(index)
+        editor=self.table.cellWidget(index,2)
+        self.table.scrollTo(self.table.model().index(index,2))
+        editor.setFocus()
+        editor.lineEdit().selectAll()
+        self.render()
 
-        reviewed_frames = sum(
-            1
-            for fn in self._frames
-            if all(
-                self._rows[i].get("reviewed") == "yes"
-                for i in self._frame_row_indices[fn]
-            )
-        )
-
-        self.progress_label.setText(
-            f"Frame {current} of {total} flagged   •   "
-            f"{reviewed_frames} of {total} reviewed"
-        )
-        self.prev_btn.setEnabled(self._current_index > 0)
-        self.next_btn.setText(
-            "Finish ✓" if self._current_index >= total - 1 else "Next  →"
-        )
-
-    # ------------------------------------------------------------
-    # Detection rows panel
-    # ------------------------------------------------------------
-
-    def _rebuild_detection_rows(self) -> None:
-        while self._rows_layout.count():
-            item = self._rows_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._species_edits = []
-
-        frame_number = self._current_frame_number()
-        if frame_number is None:
+    def select_box(self,x,y):
+        if self.raw is None or self.worker:
             return
+        h,w=self.raw.shape[:2]
+        point=(x*w,y*h)
+        rows=self.all_rows()
+        hits=[]
+        for i,row in enumerate(rows):
+            if row.get('review_status')=='rejected':
+                continue
+            x1,y1,x2,y2=[float(row[k]) for k in ('x1','y1','x2','y2')]
+            if x1<=point[0]<=x2 and y1<=point[1]<=y2:
+                hits.append(((x2-x1)*(y2-y1),i))
+        if hits:
+            _,i=min(hits)
+            if i<self.table.rowCount():
+                self.edit_detection(i)
+            else:
+                index=i-self.table.rowCount()
+                self.select_annotation(index)
+                editor=self.annotations.cellWidget(index,0)
+                editor.setFocus();editor.lineEdit().selectAll()
+            return
+        # Confident model boxes are drawn as context even when never flagged.
+        # Promote a clicked box to an editable review row; retain its model identity.
+        represented={tuple(round(float(r[k]),2) for k in ('x1','y1','x2','y2'))
+                     for r in self.current() if r.get('annotation_source')!='manual'}
+        hits=[]
+        for det in self.frame_context():
+            box=tuple(round(float(v),2) for v in det['bbox'])
+            if box in represented:
+                continue
+            x1,y1,x2,y2=box
+            if x1<=point[0]<=x2 and y1<=point[1]<=y2:
+                hits.append(((x2-x1)*(y2-y1),det))
+        if not hits:
+            return
+        det=min(hits,key=lambda hit:hit[0])[1]
+        try:
+            image=self.ensure_frame_image()
+        except OSError as exc:
+            QMessageBox.critical(self,'Cannot edit detection',str(exc));return
+        new={key:'' for key in self.fields}
+        new.update(frame_number=self.frame_number,timestamp=self.timestamp(),
+                   species=det['species'],original_species=det['species'],
+                   confidence=det['confidence'],track_id=det.get('track_id') if det.get('track_id') is not None else '',
+                   annotation_source='model',review_status='pending',reviewed='',frame_image=image)
+        new.update(dict(zip(('x1','y1','x2','y2'),[round(float(v),2) for v in det['bbox']])))
+        self.loading=True
+        self.rows.append(new)
+        self.decisions.append('confirmed')
+        index=len(self.current())-1
+        self.add_table_row(index,new)
+        self.loading=False
+        self.edit_detection(index)
 
-        row_indices = self._frame_row_indices.get(frame_number, [])
+    def zoom(self):
+        if self.canvas is None:return
+        dialog=QDialog(self);dialog.setWindowTitle('Full-resolution review — scroll to inspect');dialog.resize(1000,700)
+        layout=QVBoxLayout(dialog);scroll=QScrollArea();label=QLabel();label.setPixmap(pixmap(self.canvas));scroll.setWidget(label);layout.addWidget(scroll);dialog.exec()
 
-        for i, idx in enumerate(row_indices):
-            row = self._rows[idx]
-            color = _BOX_PALETTE_BGR[i % len(_BOX_PALETTE_BGR)]
-            hex_color = "#%02X%02X%02X" % (color[2], color[1], color[0])
+    def discard_ok(self):
+        changed=bool(self.pending) or any(a['species']!=b['species'] or (a['review_status']!=b['review_status'] and b['review_status']!='pending') or (b['review_status']=='pending' and a['review_status']!='confirmed') for a,b in zip(self.drafts(),self.current()))
+        return not changed or QMessageBox.question(self,'Unsaved edits','Leave this frame and discard unconfirmed edits?')==QMessageBox.StandardButton.Yes
 
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(4, 2, 4, 2)
-            row_layout.setSpacing(10)
-
-            swatch = QLabel()
-            swatch.setFixedSize(14, 14)
-            swatch.setStyleSheet(
-                f"background-color: {hex_color}; border-radius: 3px;"
-            )
-            row_layout.addWidget(swatch)
-
-            try:
-                confidence = float(row.get("confidence", 0))
-            except (TypeError, ValueError):
-                confidence = 0.0
-
-            info = QLabel(
-                f"AI predicted: <b>{row.get('species', '?')}</b>  "
-                f"({confidence:.2f} confidence)"
-            )
-            row_layout.addWidget(info, 1)
-
-            edit = QLineEdit()
-            edit.setPlaceholderText("Correct species name…")
-            edit.setText(row.get("species", ""))
-            edit.setFixedWidth(220)
-            if self._known_species:
-                completer = QCompleter(self._known_species, edit)
-                completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-                edit.setCompleter(completer)
-            edit.returnPressed.connect(self._go_next)
-            edit.installEventFilter(self)
-            row_layout.addWidget(edit)
-
-            self._species_edits.append(edit)
-            self._rows_layout.addWidget(row_widget)
-
-        # Keep rows top-aligned inside the fixed-height panel.
-        self._rows_layout.addStretch()
-
-    def eventFilter(self, obj, event) -> bool:
-        if event.type() == QEvent.Type.FocusIn and obj in self._species_edits:
-            idx = self._species_edits.index(obj)
-            if idx != self._selected_local_index:
-                self._selected_local_index = idx
-                self._render_current_frame()
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.KeyPress and self.isVisible()
+                and isinstance(obj, QWidget) and obj.window() == self.window()
+                and (obj is self or self.isAncestorOf(obj))
+                and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                and event.key() == Qt.Key.Key_Z and self.pending):
+            self.undo_annotation()
+            return True
+        # Plain arrows are review navigation, including when a table field has focus.
+        # Separate dialogs and open dropdown popups keep their normal keyboard controls.
+        if (event.type() == QEvent.Type.KeyPress and self.isVisible()
+                and isinstance(obj, QWidget) and obj.window() == self.window()
+                and (obj is self or self.isAncestorOf(obj))
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)):
+            self.navigate(1 if event.key() == Qt.Key.Key_Right else -1)
+            return True
         return super().eventFilter(obj, event)
 
-    def _select_detection(self, local_index: int) -> None:
-        self._selected_local_index = local_index
-        self._render_current_frame()
-        if 0 <= local_index < len(self._species_edits):
-            edit = self._species_edits[local_index]
-            edit.setFocus()
-            edit.selectAll()
-
-    # ------------------------------------------------------------
-    # Image rendering
-    # ------------------------------------------------------------
-
-    def _load_raw_frame(self, frame_number: int):
-        row_indices = self._frame_row_indices.get(frame_number, [])
-        frame_image_rel = ""
-        if row_indices:
-            frame_image_rel = self._rows[row_indices[0]].get("frame_image", "") or ""
-
-        if frame_image_rel and self._output_dir:
-            candidate = self._output_dir / frame_image_rel
-            if candidate.exists():
-                frame = cv2.imread(str(candidate))
-                if frame is not None:
-                    return frame
-
-        return self._load_fallback_frame(frame_number)
-
-    def _load_fallback_frame(self, frame_number: int):
-        if not self._video_path or not self._video_path.exists():
-            return None
-
-        if self._video_cap is None:
-            cap = cv2.VideoCapture(str(self._video_path))
-            if not cap.isOpened():
-                return None
-            self._video_cap = cap
-
-        self._video_cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number - 1))
-        ok, frame = self._video_cap.read()
-        return frame if ok else None
-
-    def _render_current_frame(self) -> None:
-        frame_number = self._current_frame_number()
-        if frame_number is None:
-            self._full_pixmap = None
-            self.image_label.setText("No frame to display.")
+    def jump_to_frame(self, _link=None):
+        if self.worker or not self.total_frames:
             return
+        number, accepted = QInputDialog.getInt(
+            self, 'Jump to frame', f'Video frame number (1–{self.total_frames}):',
+            self.frame_number, 1, self.total_frames, 1)
+        if accepted and number != self.frame_number and self.discard_ok():
+            self.frame_number = number
+            self.show_frame()
 
-        frame_bgr = self._load_raw_frame(frame_number)
-        if frame_bgr is None:
-            self._full_pixmap = None
-            self.image_label.setText(
-                "Could not load this frame's image.\n"
-                "The source video may have moved."
-            )
+    def navigate(self,step):
+        if self.worker or not self.discard_ok():return
+        self.frame_number=self.next_frame_number(step);self.show_frame()
+
+    def advance(self):
+        """Move on after a save, with nothing left to discard."""
+        self.frame_number=self.next_frame_number(1);self.show_frame()
+
+    def leave(self):
+        if not self.worker and self.discard_ok():self.on_back()
+
+    def confirm_frame(self):
+        if self.worker or self.raw is None:return
+        drafts=self.drafts();pending=self.pending_rows()
+        if not drafts and not pending:
+            self.advance();return
+        if any(not r['species'] for r in drafts if r['review_status']!='rejected'):
+            QMessageBox.warning(self,'Species required','Choose or enter a species name, or cross the row out to drop it.');return
+        if any(not self.annotations.cellWidget(i,0).currentText().strip() for i in range(len(self.pending))):
+            QMessageBox.warning(self,'Species required','Choose a species for every box you have drawn, or remove it.');return
+        unknown = sorted({r['species'] for r in drafts if r['review_status']=='confirmed' and r['species'] not in self.names}
+                         | {r['species'] for r in pending if r['species'] not in self.names})
+        if unknown and QMessageBox.question(self,'Unknown species','These names are not in the available species list. Save them anyway?\n\n'+'\n'.join(unknown)) != QMessageBox.StandardButton.Yes:
             return
-
-        canvas = frame_bgr.copy()
-        row_indices = self._frame_row_indices.get(frame_number, [])
-        for i, idx in enumerate(row_indices):
-            self._draw_box(
-                canvas, self._rows[idx], i,
-                selected=(i == self._selected_local_index),
-            )
-
-        self._full_pixmap = self._to_qpixmap(canvas)
-        self._update_image_display()
-
-    @staticmethod
-    def _draw_box(canvas, row: dict, index: int, selected: bool) -> None:
-        try:
-            x1, y1, x2, y2 = (
-                int(round(float(row["x1"]))),
-                int(round(float(row["y1"]))),
-                int(round(float(row["x2"]))),
-                int(round(float(row["y2"]))),
-            )
-        except (KeyError, TypeError, ValueError):
-            return
-
-        try:
-            confidence = float(row.get("confidence", 0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-
-        species = str(row.get("species", "?"))
-        color = _HIGHLIGHT_BGR if selected else _BOX_PALETTE_BGR[index % len(_BOX_PALETTE_BGR)]
-        thickness = 4 if selected else 2
-
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thickness)
-
-        label = f"{species} {confidence:.2f}"
-        font_scale, font_thickness = 0.6, 2
-        (tw, th), baseline = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness
-        )
-        label_y1 = max(0, y1 - th - baseline - 6)
-        label_x2 = min(canvas.shape[1] - 1, x1 + tw + 10)
-
-        cv2.rectangle(canvas, (x1, label_y1), (label_x2, y1), color, -1)
-        cv2.putText(
-            canvas, label, (x1 + 5, max(th, y1 - 6)),
-            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255),
-            font_thickness, cv2.LINE_AA,
-        )
-
-    @staticmethod
-    def _to_qpixmap(frame_bgr) -> QPixmap:
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        frame_rgb = frame_rgb.copy()
-        h, w, ch = frame_rgb.shape
-        qimg = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
-        return QPixmap.fromImage(qimg.copy())
-
-    def _update_image_display(self) -> None:
-        if self._full_pixmap is None:
-            return
-
-        label_size = self.image_label.size()
-        if label_size.width() <= 2 or label_size.height() <= 2:
-            return
-
-        scaled = self._full_pixmap.scaled(
-            label_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.image_label.setPixmap(scaled)
-
-    def _on_image_clicked(self, local_x: float, local_y: float) -> None:
-        # Derive the mapping from what is actually on screen right now,
-        # rather than from values cached at render time, so a click is
-        # always mapped against the pixmap the user is really looking at.
-        if self._full_pixmap is None:
-            return
-
-        displayed = self.image_label.pixmap()
-        if displayed is None or displayed.isNull():
-            return
-
-        scale = displayed.width() / max(1, self._full_pixmap.width())
-        if scale <= 0:
-            return
-
-        offset_x = max(0, (self.image_label.width() - displayed.width()) / 2)
-        offset_y = max(0, (self.image_label.height() - displayed.height()) / 2)
-
-        img_x = (local_x - offset_x) / scale
-        img_y = (local_y - offset_y) / scale
-
-        frame_number = self._current_frame_number()
-        if frame_number is None:
-            return
-
-        row_indices = self._frame_row_indices.get(frame_number, [])
-        for i, idx in enumerate(row_indices):
-            row = self._rows[idx]
+        for row in drafts:row['reviewed']='yes'
+        additions=[]
+        if pending:
             try:
-                x1, y1, x2, y2 = (
-                    float(row["x1"]), float(row["y1"]),
-                    float(row["x2"]), float(row["y2"]),
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-            if x1 <= img_x <= x2 and y1 <= img_y <= y2:
-                self._select_detection(i)
-                return
+                image=self.ensure_frame_image()
+            except OSError as exc:
+                QMessageBox.critical(self,'Changes not saved',str(exc));return
+            for row in pending:
+                new={key:'' for key in self.fields}
+                new.update(frame_number=self.frame_number,timestamp=self.timestamp(),species=row['species'],
+                           confidence='',track_id='',original_species='',annotation_source='manual',
+                           annotation_id=str(uuid4()),review_status='confirmed',reviewed='yes',
+                           notes='Manually annotated',frame_image=image)
+                new.update({key:row[key] for key in ('x1','y1','x2','y2')})
+                additions.append(new)
+        updates={id(old):new for old,new in zip(self.current(),drafts)}
+        # Crossing out a manual annotation deletes it outright; a model detection keeps
+        # its row so the refresh knows to drop that detection rather than re-count it.
+        deleted={id(old) for old,new in zip(self.current(),drafts)
+                 if new['review_status']=='rejected' and new.get('annotation_source')=='manual'}
+        rows=[updates.get(id(r),r) for r in self.rows if id(r) not in deleted]+additions
+        try:save_rows(self.path,rows,self.fields)
+        except OSError as exc:
+            QMessageBox.critical(self,'Changes not saved',str(exc));return
+        # Clear the drawn boxes while the tables still match the old rows.
+        self.pending=[];self.annotations.setRowCount(0)
+        self.rows=rows
+        self.names=sorted(set(self.names)|{r['species'] for r in pending})
+        self.refresh_flagged()
+        try:
+            folder=self.root/'reviewed_frames';folder.mkdir(exist_ok=True)
+            target=folder/f'frame_{self.frame_number:06d}.jpg'
+            temporary=target.with_name(target.stem+'.tmp.jpg')
+            if not cv2.imwrite(str(temporary),draw_review(self.raw,self.current(),context=self.frame_context())):raise OSError('Could not write reviewed image.')
+            temporary.replace(target)
+            self.status.setText('Saved to review CSV and reviewed_frames. Click Refresh Results to apply these decisions to the summary.')
+        except OSError as exc:self.status.setText(f'CSV saved; reviewed image failed: {exc}. You can confirm again to retry.')
+        self.advance()
 
-    # ------------------------------------------------------------
-    # Qt overrides
-    # ------------------------------------------------------------
+    def ensure_frame_image(self):
+        """Relative path to this frame's raw image, saving it the first time a frame is annotated."""
+        rows=self.current()
+        existing=rows[0].get('frame_image') if rows else ''
+        if existing and (self.root/existing).is_file():
+            return existing
+        relative=f'review_frames/frame_{self.frame_number:06d}.jpg'
+        target=self.root/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if not target.exists() and not cv2.imwrite(str(target),self.raw):
+            raise OSError('Could not write the frame image.')
+        context=self.root/'review_frames'/f'frame_{self.frame_number:06d}.json'
+        if not context.exists():
+            context.write_text(json.dumps(self.frame_context()),encoding='utf-8')
+        return relative
 
-    def resizeEvent(self, event) -> None:
+    def refresh_results(self):
+        if self.worker or not self.path:
+            return
+        if not self.discard_ok():
+            return
+        self.worker = RefreshWorker(self.root, self.path, self)
+        for button in (self.back,self.previous,self.skip,self.confirm,self.export,self.refresh):
+            button.setEnabled(False)
+        self.table.setEnabled(False)
+        self.status.setText('Refreshing results from saved review decisions…')
+        self.worker.succeeded.connect(self.refreshed)
+        self.worker.failed.connect(lambda error: QMessageBox.critical(self,'Cannot refresh results',error))
+        self.worker.finished.connect(self.export_finished)
+        self.worker.start()
+
+    def refreshed(self, species, missing_images):
+        message = f'Results refreshed: {species} species. Summary CSV, reviewed detections and charts updated.'
+        if missing_images:
+            message += ' Some Max-N images could not be rebuilt because the raw source is unavailable.'
+        self.status.setText(message)
+        self.results_refreshed.emit()
+
+    def regenerate(self):
+        if self.worker or not self.video:return
+        if not self.discard_ok():return
+        decided=[r for r in self.rows if r['review_status'] in ('confirmed','rejected')]
+        if not decided:
+            QMessageBox.information(self,'Nothing saved','Confirm a frame before regenerating the video.');return
+        missing_context=any(not (self.root/'review_frames'/f"frame_{r['frame_number']:06d}.json").exists() for r in decided)
+        message='Replace the annotated video with saved review decisions? The current annotated output will be overwritten.'
+        if missing_context:message+='\n\nThis older run lacks full detection context. Replaced frames will show only flagged detections; confident detection overlays on those frames cannot be reconstructed. Rerun detection to retain all overlays.'
+        if QMessageBox.question(self,'Regenerate video',message)!=QMessageBox.StandardButton.Yes:return
+        self.worker=ReviewVideoWorker(self.video,self.root,[dict(r) for r in self.rows],self)
+        for button in (self.back,self.previous,self.skip,self.confirm,self.export,self.refresh):button.setEnabled(False)
+        self.table.setEnabled(False)
+        self.worker.progress.connect(lambda n:self.status.setText(f'Regenerating reviewed video: {n}%'))
+        self.worker.succeeded.connect(self.exported)
+        self.worker.failed.connect(lambda error:QMessageBox.critical(self,'Video regeneration failed',error))
+        self.worker.finished.connect(self.export_finished);self.worker.start()
+
+    def exported(self,path):
+        self.reviewed_video=Path(path);self.open_video.setEnabled(True);self.status.setText(f'Reviewed video saved: {path}')
+
+    def export_finished(self):
+        worker=self.worker;self.worker=None;worker.deleteLater();self.back.setEnabled(True);self.refresh.setEnabled(True);self.table.setEnabled(True);self.show_frame()
+
+    def shutdown(self):
+        self._layout_timer.stop()
+        if self.worker:
+            self.worker.requestInterruption()
+            self.worker.wait()
+        if self.cap:
+            self.cap.release();self.cap=None
+
+    def resizeEvent(self,event):
         super().resizeEvent(event)
-        self._update_image_display()
+        if not self.loading:
+            self._layout_timer.start(0)
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event):
         super().showEvent(event)
-        self.setFocus()
-
-    def keyPressEvent(self, event) -> None:
-        key = event.key()
-        focused = QApplication.focusWidget()
-        editing = focused in self._species_edits
-
-        if not editing and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._go_next()
-            return
-        if not editing and key == Qt.Key.Key_Right:
-            self._go_next()
-            return
-        if not editing and key == Qt.Key.Key_Left:
-            self._go_prev()
-            return
-
-        super().keyPressEvent(event)
+        self._layout_timer.start(0)

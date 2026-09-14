@@ -7,6 +7,7 @@ called from the GUI worker thread or directly from the CLI.
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -194,7 +195,8 @@ def extract_maxn_example_frames(
         for det in detections:
             x1, y1, x2, y2 = [int(round(v)) for v in det["bbox"]]
             det_species = str(det["species"])
-            confidence = float(det["confidence"])
+            confidence = float(det["confidence"] or 0)
+            confidence_label = "manual" if det.get("annotation_source") == "manual" else f"{confidence:.2f}"
 
             # Clamp to frame bounds.
             x1 = max(0, min(frame.shape[1] - 1, x1))
@@ -207,7 +209,7 @@ def extract_maxn_example_frames(
                 cv2.rectangle(frame, (x1, y1), (x2, y2), black, 8)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), highlight_colour, 4)
 
-                label = f"MAX-N  {det_species}  {confidence:.2f}"
+                label = f"MAX-N  {det_species}  {confidence_label}"
                 font_scale = 0.62
                 font_thickness = 2
                 (tw, th), baseline = cv2.getTextSize(
@@ -246,7 +248,7 @@ def extract_maxn_example_frames(
                     normal_colour,
                     2,
                 )
-                label = f"{det_species} {confidence:.2f}"
+                label = f"{det_species} {confidence_label}"
                 cv2.putText(
                     frame,
                     label,
@@ -332,7 +334,6 @@ def run_pipeline(
     for path, desc in [
         (config.video_path,   "Input video"),
         (config.weights_path, "Model weights"),
-        # (config.tracker_path, "Tracker config"),
     ]:
         if not path.is_file():
             raise FileNotFoundError(f"{desc} not found: {path}")
@@ -383,7 +384,6 @@ def run_pipeline(
         raise RuntimeError(f"Could not create output video: {output_video}")
 
     flagged_detections: list[dict] = []
-    track_data: dict[int, dict[str, Any]] = {}
     species_data: dict[str, dict[str, Any]] = {}
     frame_counts: dict[str, list[tuple[int, int, float]]] = defaultdict(list)
 
@@ -392,6 +392,7 @@ def run_pipeline(
     # boxes on top of, rather than reusing the model-annotated output video.
     review_frames_dir = config.output_dir / REVIEW_FRAMES_DIRNAME
     saved_review_frames: set[int] = set()
+    saved_context_frames: set[int] = set()
 
     def save_review_frame(frame_number: int, frame_bgr: Any) -> str:
         """Save a raw copy of a flagged frame, once. Returns the path
@@ -410,6 +411,10 @@ def run_pipeline(
     maxn_snapshots: dict[str, dict[str, Any]] = {}
 
     was_cancelled = False
+    detection_records = []
+
+    names = getattr(detector, "class_names", [])
+    (config.output_dir / "species_names.json").write_text(json.dumps(names), encoding="utf-8")
 
     log("Running detection...")
 
@@ -471,6 +476,8 @@ def run_pipeline(
                 )
             ]
 
+            detection_records.append({"frame_number": frame_number, "detections": detections_this_frame})
+
             for species, count in species_this_frame.items():
                 previous = maxn_snapshots.get(species)
                 if previous is None or count > int(previous["count"]):
@@ -488,38 +495,24 @@ def run_pipeline(
             ):
                 if species not in species_data:
                     species_data[species] = {
-                        "first_seconds": timestamp_seconds,
-                        "last_seconds": timestamp_seconds,
                         "total_detections": 0,
                         "confidences": [],
                         "track_ids": set(),
                     }
                 sd = species_data[species]
-                sd["first_seconds"] = min(sd["first_seconds"], timestamp_seconds)
-                sd["last_seconds"] = max(sd["last_seconds"], timestamp_seconds)
                 sd["total_detections"] += 1
                 sd["confidences"].append(confidence)
 
                 if track_id is not None:
                     sd["track_ids"].add(track_id)
-                    if track_id not in track_data:
-                        track_data[track_id] = {
-                            "species_votes": [],
-                            "confidences": [],
-                            "first_seconds": timestamp_seconds,
-                            "last_seconds": timestamp_seconds,
-                            "total_detections": 0,
-                        }
-
-                    track = track_data[track_id]
-                    track["species_votes"].append(species)
-                    track["last_seconds"] = timestamp_seconds
-                    track["confidences"].append(confidence)
-                    track["total_detections"] += 1
 
                 if confidence < config.review_confidence:
                     x1, y1, x2, y2 = bbox
                     frame_image = save_review_frame(frame_number, frame_bgr)
+                    context_path = review_frames_dir / f"frame_{frame_number:06d}.json"
+                    if frame_number not in saved_context_frames:
+                        context_path.write_text(json.dumps(detections_this_frame), encoding="utf-8")
+                        saved_context_frames.add(frame_number)
                     flagged_detections.append({
                         "frame_number": frame_number,
                         "timestamp": timestamp,
@@ -547,11 +540,11 @@ def run_pipeline(
         return {}
 
     log("Writing CSV outputs...")
-
-    for track in track_data.values():
-        track["species"] = Counter(
-            track["species_votes"]
-        ).most_common(1)[0][0]
+    (config.output_dir / "original_detections.json").write_text(
+        json.dumps({"fps": fps, "duration": video_duration,
+                    "video": config.video_path.name,
+                    "source_video": str(config.video_path.resolve()),
+                    "frames": detection_records}), encoding="utf-8")
 
     rows = []
 

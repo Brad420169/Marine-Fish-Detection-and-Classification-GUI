@@ -6,7 +6,6 @@ file shortcuts, Max-N example frames, and the summary charts panel.
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -18,7 +17,7 @@ from PyQt6.QtWidgets import (
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from paths import open_path
-from charts import build_charts, ScrollPassthroughCanvas
+from charts import build_charts, ScrollPassthroughCanvas, _read_summary_csv
 
 
 class ResultsPage(QWidget):
@@ -74,25 +73,26 @@ class ResultsPage(QWidget):
         outer_root.addWidget(inner, 1)
 
         root = QVBoxLayout(inner)
-        root.setContentsMargins(18, 32, 18, 32)
-        root.setSpacing(20)
+        root.setContentsMargins(16, 12, 16, 16)
+        root.setSpacing(12)
 
         # ----------------------------------------------------
         # Header
         # ----------------------------------------------------
 
-        title = QLabel("Detection Complete")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title = QLabel("Detection Results")
+        title.setObjectName("pageTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet("color: #003B70;")
+        title.setStyleSheet("color: #ecf8ff;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Your video has finished processing successfully."
+            "Summary of detections and visualisations from your run."
         )
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignLeft)
         subtitle.setStyleSheet(
-            "color: #6B7785; font-size: 13px;"
+            "color: #afd0e3; font-size: 13px;"
         )
         root.addWidget(subtitle)
 
@@ -113,14 +113,21 @@ class ResultsPage(QWidget):
         info_layout.addWidget(self.project_label)
         info_layout.addWidget(self.model_label)
         info_layout.addWidget(self.output_label)
+        self.run_stats_label = QLabel()
+        self.run_stats_label.setObjectName("muted")
+        self.run_stats_label.setWordWrap(True)
+        info_layout.addWidget(self.run_stats_label)
 
-        root.addWidget(info_group)
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(14)
+        root.addLayout(summary_row)
+        summary_row.addWidget(info_group,2)
 
         # ----------------------------------------------------
         # Result files
         # ----------------------------------------------------
 
-        results_group = QGroupBox("Results")
+        results_group = QGroupBox("Actions")
         results_layout = QVBoxLayout(results_group)
         results_layout.setSpacing(10)
 
@@ -142,15 +149,6 @@ class ResultsPage(QWidget):
         )
         results_layout.addWidget(self.open_summary_btn)
 
-        # self.open_flagged_btn = QPushButton("⚑   Open Review CSV")
-        # self.open_flagged_btn.setCursor(
-        #     Qt.CursorShape.PointingHandCursor
-        # )
-        # self.open_flagged_btn.clicked.connect(
-        #     lambda: self._open_result("flagged_csv")
-        # )
-        # results_layout.addWidget(self.open_flagged_btn)
-
         self.open_folder_btn = QPushButton("📁   Open Output Folder")
         self.open_folder_btn.setCursor(
             Qt.CursorShape.PointingHandCursor
@@ -160,17 +158,16 @@ class ResultsPage(QWidget):
         )
         results_layout.addWidget(self.open_folder_btn)
 
-        root.addWidget(results_group)
+        summary_row.addWidget(results_group,1)
 
 
         # Review Low-Confidence Frames widget
-        self.review_group = QGroupBox("Review Low-Confidence Frames")
+        self.review_group = QGroupBox("Review Detections")
         review_layout = QVBoxLayout(self.review_group)
         review_layout.setSpacing(10)
 
         caption = QLabel(
-            "Review each frame that the model was unsure about to confirm or "
-            "correct each prediction."
+            "Inspect the video, correct species labels and annotate missed fish."
         )
         caption.setWordWrap(True)
         review_layout.addWidget(caption)
@@ -180,7 +177,7 @@ class ResultsPage(QWidget):
         self.review_btn.clicked.connect(self._open_review)
         review_layout.addWidget(self.review_btn)
 
-        root.addWidget(self.review_group) 
+        summary_row.addWidget(self.review_group,1)
 
 
 
@@ -214,10 +211,10 @@ class ResultsPage(QWidget):
             image_label.setStyleSheet(
                 """
                 QLabel {
-                    background-color: #F8FAFC;
-                    border: 1px solid #D7E0E8;
+                    background-color: #082b40;
+                    border: 1px solid #1b6584;
                     border-radius: 6px;
-                    color: #8A99A6;
+                    color: #93b5ca;
                 }
                 """
             )
@@ -227,7 +224,7 @@ class ResultsPage(QWidget):
             caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
             caption.setWordWrap(True)
             caption.setStyleSheet(
-                "color: #52606D; font-size: 11px; font-weight: 600;"
+                "color: #b7d8ec; font-size: 11px; font-weight: 600;"
             )
             card_layout.addWidget(caption)
 
@@ -246,12 +243,13 @@ class ResultsPage(QWidget):
         charts_outer = QVBoxLayout(self.charts_group)
         charts_outer.setContentsMargins(8, 8, 8, 8)
 
+        self._chart_height = 650
         self._chart_canvas: FigureCanvas | None = None
         self._chart_placeholder = QLabel(
             "Charts will appear here once a detection run completes."
         )
         self._chart_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._chart_placeholder.setStyleSheet("color: #8A99A6; font-style: italic;")
+        self._chart_placeholder.setStyleSheet("color: #93b5ca; font-style: italic;")
         self._chart_placeholder.setFixedHeight(60)
         charts_outer.addWidget(self._chart_placeholder)
 
@@ -272,13 +270,13 @@ class ResultsPage(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._chart_scroll.setMinimumHeight(1400)
-        self._chart_scroll.setMaximumHeight(1400)
+        self._chart_scroll.setMinimumHeight(650)
+        self._chart_scroll.setMaximumHeight(650)
         self._chart_scroll.hide()
         charts_outer.addWidget(self._chart_scroll)
 
         self._charts_layout = charts_outer
-        root.addWidget(self.charts_group)
+        root.insertWidget(3,self.charts_group)
 
         root.addStretch()
 
@@ -287,7 +285,7 @@ class ResultsPage(QWidget):
         # ----------------------------------------------------
 
         nav_widget = QWidget()
-        nav_widget.setStyleSheet("background-color: #F4F7FA; border-top: 1px solid #D7E0E8;")
+        nav_widget.setStyleSheet("background-color: #062438; border-top: 1px solid #1b6584;")
         navigation = QHBoxLayout(nav_widget)
         navigation.setContentsMargins(32, 12, 32, 16)
         navigation.setSpacing(12)
@@ -310,7 +308,7 @@ class ResultsPage(QWidget):
             return
 
         available_width = max(1, self._chart_scroll.viewport().width())
-        self._chart_canvas.resize(available_width, 1360)
+        self._chart_canvas.resize(available_width, self._chart_height-20)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -336,6 +334,9 @@ class ResultsPage(QWidget):
         self.project_label.setText(f"Project: {project_name}")
         self.model_label.setText(f"Model: {model_name}")
         self.output_label.setText(f"Output folder: {output_dir}")
+        summary = _read_summary_csv(outputs['summary_csv']) if outputs.get('summary_csv') else []
+        total = sum(int(row.get('total_detections',0)) for row in summary)
+        self.run_stats_label.setText(f"{len(summary)} species    •    {total:,} detections")
 
         # Disable buttons if a particular output was not produced.
         self.open_video_btn.setEnabled(
@@ -445,12 +446,14 @@ class ResultsPage(QWidget):
             self._chart_placeholder.show()
             return
 
+        self._chart_height = max(650, len(fig.axes[0].get_yticklabels()) * 52 + 240)
+        self._chart_scroll.setFixedHeight(self._chart_height)
         canvas = ScrollPassthroughCanvas(fig)
 
         # Fill the chart viewport horizontally. The chart remains tall so the
         # Results page itself can scroll vertically, but never horizontally.
         canvas.setMinimumWidth(0)
-        canvas.setMinimumHeight(1360)
+        canvas.setMinimumHeight(self._chart_height-20)
         canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -469,19 +472,6 @@ class ResultsPage(QWidget):
         path = self.outputs.get(key)
         if path:
             open_path(path)
-
-    @staticmethod
-    def _csv_has_rows(path: Path) -> bool:
-        """True if a CSV file exists and has at least one data row."""
-        if not path.exists():
-            return False
-        try:
-            with path.open(newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                next(reader, None)  # header
-                return next(reader, None) is not None
-        except OSError:
-            return False
 
     def _open_review(self) -> None:
         if self._on_review:
