@@ -1,6 +1,6 @@
 """Readable evaluation of saved review decisions."""
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QGridLayout,
+from PyQt6.QtWidgets import (QAbstractItemView, QDialog, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -36,13 +36,18 @@ class EvaluationPage(QDialog):
         if not report['complete']:
             self.label('These are provisional scores for the reviewed subset. Flagged frames are a biased sample; '
                        'turn off “Review frames only” and review the whole video for a full-run evaluation.')
-        self.mode = QComboBox()
-        self.mode.addItems(['Detection + species', 'Fish detection'])
-        self.body.addWidget(self.mode)
-        self.explanation = self.label('')
+        self.label('Detection precision checks whether predictions locate fish. Recall checks whether fish from trained species were found. '
+                   'Species accuracy checks their labels only after detection.')
+        if not report['class_list_available']:
+            self.label('The saved model class list is unavailable. Detection recall and species accuracy are N/A; '
+                       'run inference again to record the class list. Detection precision remains available.')
+        else:
+            outside = report['outside']
+            self.label(f"Outside trained classes: {outside['detected']:,} detected, {outside['missed']:,} missed. "
+                       'These observations are excluded from trained-species recall and accuracy. Detected fish still count toward detection precision.')
         cards = QHBoxLayout(); self.body.addLayout(cards)
         self.cards = {}
-        for key, title in [('precision', 'Precision'), ('recall', 'Recall'), ('f1', 'F1 score')]:
+        for key, title in [('precision', 'Detection precision'), ('recall', 'Detection recall'), ('accuracy', 'Species accuracy')]:
             box = QGroupBox(title); column = QVBoxLayout(box)
             value = QLabel(); value.setObjectName('pageTitle'); column.addWidget(value)
             description = QLabel(); description.setWordWrap(True); column.addWidget(description)
@@ -54,11 +59,11 @@ class EvaluationPage(QDialog):
         for index, (title, key) in enumerate([('Correct predictions', 'correct'), ('Species corrected', 'corrected'),
                                             ('Predictions rejected', 'rejected'), ('Missed fish added', 'missed')]):
             label = QLabel(f'{counts[key]:,}  {title}'); grid.addWidget(label, index // 2, index % 2)
-        self.label('Per-species results', 'cardTitle')
+        self.label('Trained-species results', 'cardTitle')
         self.label('A species correction counts as a false positive for the predicted species and a false negative '
-                   'for the reviewed species. Overall Detection + species scores pool these counts across species.')
+                   'for the reviewed species when it is trained. This table measures species-aware precision and recall; it differs from the detection scores above.')
         self.table = QTableWidget(len(report['species']), 7)
-        self.table.setHorizontalHeaderLabels(['Species', 'Correct', 'False positives', 'Missed / wrong species', 'Precision', 'Recall', 'F1'])
+        self.table.setHorizontalHeaderLabels(['Species', 'Correct', 'False positives', 'Missed or misidentified', 'Precision', 'Recall', 'F1'])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
         for row, (name, values) in enumerate(report['species'].items()):
@@ -68,14 +73,13 @@ class EvaluationPage(QDialog):
         self.table.resizeColumnsToContents(); self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setMinimumHeight(190); self.body.addWidget(self.table)
         self.label('How to read these scores', 'cardTitle')
-        self.label('Precision = correct predictions ÷ all predictions. Recall = correctly detected fish ÷ all reviewed fish. '
-                   'F1 balances precision and recall. N/A means there is no denominator. '
+        self.label('Detection precision = fish detected ÷ all predictions. Detection recall = trained-species fish detected ÷ all reviewed trained-species fish. '
+                   'Species accuracy = correct species labels ÷ detected trained-species fish. Missed fish are excluded from species accuracy. N/A means no eligible observations or missing class information. '
                    'Counts represent fish observations per frame, not unique fish or tracks. '
                    'Your review is the reference: add every missed fish and reject duplicate or spurious boxes. '
                    'This evaluates detection and species decisions, not bounding-box overlap (IoU) or mAP.')
         self.body.addStretch()
         close = QPushButton('Back to review'); close.clicked.connect(self.accept); layout.addWidget(close)
-        self.mode.currentIndexChanged.connect(self.update_scores)
         self.update_scores()
 
     def label(self, text, name=None):
@@ -85,21 +89,19 @@ class EvaluationPage(QDialog):
         return label
 
     def update_scores(self):
-        species_mode = self.mode.currentIndex() == 0
-        values = self.report['classification' if species_mode else 'detection']
-        self.explanation.setText(
-            'A prediction is correct only when both the fish and its species are correct. Species corrections reduce precision and recall.'
-            if species_mode else 'A fish counts as detected even if its species needed correction. Only rejected predictions and missed fish reduce these scores.')
-        p, r, f = values['precision'], values['recall'], values['f1']
+        values = self.report['detection']
+        p, r, accuracy = values['precision'], values['recall'], self.report['species_accuracy']
         descriptions = {
             'precision': ('No AI predictions in the confirmed frames.' if p is None else
-                          f'{p:.0%} of predictions {"detected a fish with the correct species" if species_mode else "correctly detected a fish"}.'),
-            'recall': ('No reviewed fish in the confirmed frames.' if r is None else
-                       f'{1-r:.0%} of fish {"were missed or assigned the wrong species" if species_mode else "were not detected"}.'),
-            'f1': 'No predictions or reviewed fish to score.' if f is None else 'A combined measure of precision and recall; closer to 1 is better.'}
-        tp, fp, fn = (values[k] for k in ('tp', 'fp', 'fn'))
-        fractions = {'precision': f'{tp:,} correct / {tp+fp:,} predictions',
-                     'recall': f'{tp:,} correct / {tp+fn:,} reviewed fish',
-                     'f1': '2 × precision × recall / (precision + recall)'}
+                          f'{p:.0%} of predictions correctly located a fish.'),
+            'recall': ('No eligible trained-species fish, or the model class list is unavailable.' if r is None else
+                       f'{1-r:.0%} of fish from trained species were not detected.'),
+            'accuracy': ('No detected trained-species fish, or the model class list is unavailable.' if accuracy is None else
+                         f'{accuracy:.0%} of detected fish from trained species were identified correctly.')}
+        detected, missed = values['trained_detected'], values['trained_missed']
+        fractions = {'precision': f"{values['detected']:,} fish / {values['predictions']:,} predictions",
+                     'recall': f'{detected:,} detected / {detected+missed:,} trained-species fish',
+                     'accuracy': f"{self.report['species_correct']:,} correct labels / {detected:,} detected trained-species fish"}
+        scores = dict(precision=p, recall=r, accuracy=accuracy)
         for key, (value, description, count) in self.cards.items():
-            value.setText(score(values[key])); description.setText(descriptions[key]); count.setText(fractions[key])
+            value.setText(score(scores[key])); description.setText(descriptions[key]); count.setText(fractions[key])

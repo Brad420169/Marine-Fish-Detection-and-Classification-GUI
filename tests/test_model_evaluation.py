@@ -22,7 +22,7 @@ def row(species='Tang', x=0, status='confirmed', source='model', number=1):
 
 
 def original(detections, total=1):
-    return dict(fps=1, duration=total, total_frames=total,
+    return dict(fps=1, duration=total, total_frames=total, class_names=["Tang", "Wrasse"],
                 frames=[dict(frame_number=1, detections=detections)])
 
 
@@ -36,8 +36,7 @@ class EvaluationTests(unittest.TestCase):
         rows = [row(), row('Wrasse', x=20), row(x=40, status='rejected'), row(x=60, source='manual')]
         report = evaluate(data, rows, completion(data, rows))
         self.assertEqual(report['counts'], dict(correct=1, corrected=1, rejected=1, missed=1))
-        self.assertAlmostEqual(report['classification']['precision'], 1/3)
-        self.assertAlmostEqual(report['classification']['recall'], 1/3)
+        self.assertAlmostEqual(report['species_accuracy'], 1/2)
         self.assertAlmostEqual(report['detection']['precision'], 2/3)
         self.assertAlmostEqual(report['detection']['recall'], 2/3)
         self.assertEqual(report['species']['Tang']['fp'], 2)
@@ -101,7 +100,7 @@ class EvaluationTests(unittest.TestCase):
     def test_legacy_saved_frame_is_provisional(self):
         data = original([detection()]); rows = [row()]
         report = evaluate(data, rows, {}, legacy_frames=[1])
-        self.assertEqual(report['classification']['precision'], 1)
+        self.assertEqual(report['detection']['precision'], 1)
         self.assertEqual(report['legacy_frames'], 1)
         self.assertFalse(report['complete'])
 
@@ -112,13 +111,39 @@ class EvaluationTests(unittest.TestCase):
         report = evaluate(data, rows, saved, legacy_frames=[1])
         self.assertEqual(report['reviewed_frames'], 0)
 
-    def test_ui_explains_scores_and_switches_mode(self):
+    def test_ui_separates_detection_from_species_accuracy(self):
         app = QApplication.instance() or QApplication([])
         data = original([detection()]); rows = [row('Wrasse')]
         dialog = EvaluationPage(evaluate(data, rows, completion(data, rows)))
-        self.assertEqual(dialog.cards['precision'][0].text(), '0.00')
-        self.assertIn('wrong species', dialog.cards['recall'][1].text())
-        dialog.mode.setCurrentIndex(1)
         self.assertEqual(dialog.cards['precision'][0].text(), '1.00')
-        self.assertEqual(dialog.cards['recall'][1].text(), '0% of fish were not detected.')
+        self.assertEqual(dialog.cards['recall'][0].text(), '1.00')
+        self.assertEqual(dialog.cards['accuracy'][0].text(), '0.00')
+        self.assertEqual(dialog.cards['recall'][1].text(), '0% of fish from trained species were not detected.')
         dialog.close()
+
+    def test_outside_species_do_not_lower_trained_recall_or_accuracy(self):
+        data = original([detection(), detection(x=20), detection(x=40)])
+        rows = [row(), row('Shark', x=20), row(x=40, status='rejected'),
+                row('Shark', x=60, source='manual'), row(x=80, source='manual')]
+        report = evaluate(data, rows, completion(data, rows))
+        self.assertAlmostEqual(report['detection']['precision'], 2/3)
+        self.assertEqual(report['detection']['recall'], .5)
+        self.assertEqual(report['species_accuracy'], 1)
+        self.assertEqual(report['outside'], dict(detected=1, missed=1))
+        self.assertNotIn('Shark', report['species'])
+        self.assertEqual(report['species']['Tang']['fp'], 2)
+
+    def test_missing_class_list_does_not_guess_from_predictions(self):
+        data = original([detection()]); del data['class_names']
+        report = evaluate(data, [], completion(data, []))
+        self.assertEqual(report['detection']['precision'], 1)
+        self.assertIsNone(report['detection']['recall'])
+        self.assertIsNone(report['species_accuracy'])
+        self.assertFalse(report['class_list_available'])
+
+    def test_only_outside_species_has_no_eligible_accuracy_or_recall(self):
+        data = original([detection()]); rows = [row('Shark')]
+        report = evaluate(data, rows, completion(data, rows))
+        self.assertEqual(report['detection']['precision'], 1)
+        self.assertIsNone(report['detection']['recall'])
+        self.assertIsNone(report['species_accuracy'])

@@ -435,7 +435,13 @@ never modified. A failed regeneration leaves the current output video intact.
 
 ### Evaluate the AI model
 
-Click **Evaluate AI model** beside **Open video** on the Review page. The dark evaluation view shows precision, recall, F1, correction counts and per-species scores, using original predictions and saved reviews. **Detection + species** requires both the fish and species to be correct; **Fish detection** treats a species correction as a detected fish. For example, detection recall of 0.91 means 9% of reviewed fish were not detected. A species correction contributes a false positive to the predicted species and a false negative to the corrected species.
+Click **Evaluate AI model** beside **Open video** on the Review page. The three headline scores separate finding fish from identifying them:
+
+- **Detection precision:** detected fish divided by all predictions, regardless of species. Rejected or duplicate predictions reduce precision; species corrections do not.
+- **Detection recall:** detected fish from trained species divided by all reviewed fish from trained species. A recall of 0.91 means 9% of those fish were not detected. A detected fish still counts if its species was corrected.
+- **Species accuracy:** correct species labels divided by detected fish from trained species. Missed fish are excluded, so this measures identification after detection.
+
+Species outside the saved model class list are reported separately as detected or missed. They are excluded from trained-species recall and accuracy, but a detected fish still counts toward detection precision. The detailed trained-species table retains species-aware precision/recall: an incorrect trained label remains a false positive even when the actual fish is outside the class list. New runs preserve the class list with their original predictions; older runs use `species_names.json`. If neither supplies a class list, recall and species accuracy show **N/A** rather than guessing from observed predictions. Review labels must match the saved class names to be considered trained species.
 
 **Confirm & Next** records full-frame completion, including empty frames and unchanged confident predictions. Inspect every prediction, reject spurious or duplicate boxes, and add every missed fish before confirming. Turn off **Review frames only** to review the whole video. Partial reviews show provisional scores for their subset, not a full-video estimate. Older saved review images can establish provisional review coverage; reconfirm those frames to verify completion. Runs without original detections must be processed again before evaluation is available.
 

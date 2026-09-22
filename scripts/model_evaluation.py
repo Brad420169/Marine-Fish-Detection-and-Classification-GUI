@@ -60,8 +60,13 @@ def box_key(box):
     return tuple(round(float(v), 2) for v in box)
 
 
-def evaluate(original, rows, completion, legacy_frames=()):
+def evaluate(original, rows, completion, legacy_frames=(), trained_species=None):
     """Count fish instances per frame; species corrections are FP + FN by class."""
+    if trained_species is None:
+        trained_species = original.get('class_names')
+    trained = None if not trained_species else {name.strip() for name in trained_species}
+    trained_detected = trained_correct = trained_missed = 0
+    outside_detected = outside_missed = 0
     total = int(original.get('total_frames') or round(original['fps'] * original['duration']))
     by_frame = {int(f['frame_number']): f['detections'] for f in original['frames']}
     grouped = defaultdict(list)
@@ -100,7 +105,15 @@ def evaluate(original, rows, completion, legacy_frames=()):
                         raise ValueError('Manual annotations must have distinct IDs.')
                     seen_manual.add(identity)
                     counts['missed'] += 1
-                    species[row['species'].strip()]['fn'] += 1
+                    actual = row['species'].strip()
+                    if not actual:
+                        raise ValueError('A confirmed fish has no species name.')
+                    if trained is not None:
+                        if actual in trained:
+                            trained_missed += 1
+                            species[actual]['fn'] += 1
+                        else:
+                            outside_missed += 1
             else:
                 lookup[box_key(row[k] for k in ('x1', 'y1', 'x2', 'y2'))].append(row)
         for detection in by_frame.get(number, []):
@@ -109,26 +122,44 @@ def evaluate(original, rows, completion, legacy_frames=()):
             review = matches.popleft() if matches else None
             if review and review['review_status'] == 'rejected':
                 counts['rejected'] += 1
-                species[predicted]['fp'] += 1
+                if trained is not None and predicted in trained:
+                    species[predicted]['fp'] += 1
             else:
                 actual = review['species'].strip() if review else predicted
                 if not actual:
                     raise ValueError('A confirmed fish has no species name.')
+                if trained is not None:
+                    if actual in trained:
+                        trained_detected += 1
+                        trained_correct += int(actual == predicted)
+                    else:
+                        outside_detected += 1
                 if actual == predicted:
                     counts['correct'] += 1
-                    species[predicted]['tp'] += 1
+                    if trained is not None and predicted in trained:
+                        species[predicted]['tp'] += 1
                 else:
                     counts['corrected'] += 1
-                    species[predicted]['fp'] += 1
-                    species[actual]['fn'] += 1
+                    if trained is not None and predicted in trained:
+                        species[predicted]['fp'] += 1
+                    if trained is not None and actual in trained:
+                        species[actual]['fn'] += 1
         if any(lookup.values()):
             raise ValueError('Some review decisions do not match the original predictions.')
     correct, corrected, rejected, missed = (counts[k] for k in ('correct', 'corrected', 'rejected', 'missed'))
     return dict(counts=counts, reviewed_frames=len(confirmed), total_frames=total,
                 legacy_frames=len(legacy), verified_frames=verified_count,
                 complete=total > 0 and verified_count == total,
-                detection=metrics(correct + corrected, rejected, missed),
-                classification=metrics(correct, rejected + corrected, missed + corrected),
+                class_list_available=trained is not None,
+                detection=dict(precision=(correct+corrected)/(correct+corrected+rejected)
+                               if correct+corrected+rejected else None,
+                               recall=trained_detected/(trained_detected+trained_missed)
+                               if trained_detected+trained_missed else None,
+                               detected=correct+corrected, predictions=correct+corrected+rejected,
+                               trained_detected=trained_detected, trained_missed=trained_missed),
+                species_accuracy=trained_correct/trained_detected if trained_detected else None,
+                species_correct=trained_correct,
+                outside=dict(detected=outside_detected, missed=outside_missed),
                 species={name: metrics(**values) for name, values in sorted(species.items())})
 
 
@@ -150,4 +181,13 @@ def evaluate_run(root, csv_path):
         suffix = image.stem.removeprefix('frame_')
         if suffix.isdigit() and image.stat().st_mtime_ns >= source.stat().st_mtime_ns:
             legacy_frames.append(int(suffix))
-    return evaluate(json.loads(source.read_text(encoding='utf-8')), rows, read_confirmation(root), legacy_frames)
+    original = json.loads(source.read_text(encoding='utf-8'))
+    classes_path = root / 'species_names.json'
+    trained = original.get('class_names')
+    if trained is None and classes_path.exists():
+        trained = json.loads(classes_path.read_text(encoding='utf-8'))
+    if trained is not None:
+        if not isinstance(trained, list) or any(not isinstance(name, str) or not name.strip() for name in trained):
+            raise ValueError('The saved model class list is invalid.')
+        trained = trained or None
+    return evaluate(original, rows, read_confirmation(root), legacy_frames, trained)

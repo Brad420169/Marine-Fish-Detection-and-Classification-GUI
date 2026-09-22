@@ -544,6 +544,7 @@ def run_pipeline(
         json.dumps({"fps": fps, "duration": video_duration, "total_frames": frame_index,
                     "video": config.video_path.name,
                     "source_video": str(config.video_path.resolve()),
+                    "class_names": names,
                     "frames": detection_records}), encoding="utf-8")
 
     rows = []
