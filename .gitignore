@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 projects/
 
+# Test code
+tests/
+
+
 # Models - only distribute the default
 models/*
 !models/kona_hawaiiXL.pt
