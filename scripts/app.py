@@ -26,6 +26,13 @@ if sys.platform == "win32":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("QUT.MarineFishDetector")
 
 
+def set_app_font(app: QApplication) -> None:
+    font = QFont("Segoe UI", 10)
+    if sys.platform == "linux":
+        font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+    app.setFont(font)
+
+
 def main() -> None:
     # Use Qt browse dialogs so the shared dark theme applies on every platform.
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
@@ -35,7 +42,7 @@ def main() -> None:
     # Ignored on Windows and macOS, which identify the app by the lines above.
     app.setDesktopFileName("marine-fish-gui")
     app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI", 10))
+    set_app_font(app)
     app.setStyleSheet(APP_STYLE)
 
     if ICON_PATH.exists():

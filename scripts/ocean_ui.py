@@ -1,6 +1,6 @@
 """Shared ocean backdrop and application navigation chrome."""
-from PyQt6.QtCore import Qt, QRectF
-from PyQt6.QtGui import QColor, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QRectF, QSize
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from paths import ROOT_DIR
@@ -50,8 +50,11 @@ class OceanShell(OceanBackground):
         nav = QVBoxLayout(sidebar);nav.setContentsMargins(8,16,8,18);nav.setSpacing(8)
         self.buttons = {}
         for key, label in [('projects','▱   Projects'),('detection','▶   Run Detection'),
-                           ('results','▥   Results'),('review','⌕   Review Detections')]:
+                           ('results','▥   Results'),('review','Review Detections')]:
             button = QPushButton(label);button.setObjectName('navButton');button.setCheckable(True)
+            if key == 'review':
+                button.setIcon(QIcon(str(ROOT_DIR/'assets'/'search.svg')))
+                button.setIconSize(QSize(18, 18))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, target=key:navigate(target))
             nav.addWidget(button);self.buttons[key]=button

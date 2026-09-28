@@ -18,11 +18,12 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from paths import open_path
+from paths import ROOT_DIR, open_path
 from widgets import PathRow
 from project_manager import Project, create_project, delete_project, list_projects
 
 RECENT_LIMIT = 4
+DEFAULT_THUMBNAIL = ROOT_DIR / 'assets' / 'project_placeholder.png'
 
 
 def _run_detections(output_dir: str) -> int:
@@ -104,7 +105,7 @@ class ProjectCard(QFrame):
 
         thumb = QLabel(); thumb.setObjectName('projectThumb'); thumb.setFixedSize(104,72)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        picture = QPixmap(stats['thumbnail']) if stats['thumbnail'] else QPixmap()
+        picture = QPixmap(stats['thumbnail'] or str(DEFAULT_THUMBNAIL))
         if picture.isNull():
             thumb.setText('No\npreview')
         else:
@@ -339,7 +340,7 @@ class ProjectsPage(QWidget):
             self.details_text.setText('')
             return
         stats = self.stats[self.selected.name]
-        picture = QPixmap(stats['thumbnail']) if stats['thumbnail'] else QPixmap()
+        picture = QPixmap(stats['thumbnail'] or str(DEFAULT_THUMBNAIL))
         if picture.isNull():
             self.details_thumb.clear(); self.details_thumb.setText('No preview available')
         else:

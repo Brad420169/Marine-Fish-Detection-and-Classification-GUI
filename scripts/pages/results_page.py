@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
     QVBoxLayout, QWidget
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from paths import open_path
+from paths import ROOT_DIR, open_path
 from charts import build_charts, ScrollPassthroughCanvas, _read_summary_csv
 
 
@@ -131,7 +131,9 @@ class ResultsPage(QWidget):
         results_layout = QVBoxLayout(results_group)
         results_layout.setSpacing(10)
 
-        self.open_video_btn = QPushButton("▶   Open Annotated Video")
+        self.open_video_btn = QPushButton("   Open Annotated Video")
+        self.open_video_btn.setIcon(QIcon(str(ROOT_DIR / "assets" / "annotated_video.png")))
+        self.open_video_btn.setIconSize(QSize(20, 20))
         self.open_video_btn.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -140,7 +142,9 @@ class ResultsPage(QWidget):
         )
         results_layout.addWidget(self.open_video_btn)
 
-        self.open_summary_btn = QPushButton("📄   Open Summary CSV")
+        self.open_summary_btn = QPushButton("   Open Summary CSV")
+        self.open_summary_btn.setIcon(QIcon(str(ROOT_DIR / "assets" / "summary_csv.png")))
+        self.open_summary_btn.setIconSize(QSize(20, 20))
         self.open_summary_btn.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -149,7 +153,9 @@ class ResultsPage(QWidget):
         )
         results_layout.addWidget(self.open_summary_btn)
 
-        self.open_folder_btn = QPushButton("📁   Open Output Folder")
+        self.open_folder_btn = QPushButton("   Open Output Folder")
+        self.open_folder_btn.setIcon(QIcon(str(ROOT_DIR / "assets" / "output_folder.png")))
+        self.open_folder_btn.setIconSize(QSize(20, 20))
         self.open_folder_btn.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -157,6 +163,8 @@ class ResultsPage(QWidget):
             self._open_output_folder
         )
         results_layout.addWidget(self.open_folder_btn)
+        for button in (self.open_video_btn, self.open_summary_btn, self.open_folder_btn):
+            button.setStyleSheet("text-align: left; padding-left: 22px;")
 
         summary_row.addWidget(results_group,1)
 
@@ -172,7 +180,10 @@ class ResultsPage(QWidget):
         caption.setWordWrap(True)
         review_layout.addWidget(caption)
 
-        self.review_btn = QPushButton("🔎   Start Review")
+        self.review_btn = QPushButton("   Start Review")
+        self.review_btn.setIcon(QIcon(str(ROOT_DIR / "assets" / "start_review.png")))
+        self.review_btn.setIconSize(QSize(20, 20))
+        self.review_btn.setStyleSheet("text-align: left; padding-left: 22px;")
         self.review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.review_btn.clicked.connect(self._open_review)
         review_layout.addWidget(self.review_btn)

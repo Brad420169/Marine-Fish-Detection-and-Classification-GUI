@@ -60,6 +60,10 @@ QScrollBar::handle { background: #28617e; border-radius: 4px; min-height: 25px; 
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 QToolTip { background: #103c54; color: #ffffff; padding: 6px; border: 1px solid #19a5d5; }
+QMenu { background: #0a3049; color: #effaff; border: 1px solid #176789; }
+QMenu::item:selected { background: #086996; color: #ffffff; }
+QMenu::item:disabled { color: #64859b; }
+QMenu::separator { height: 1px; background: #176789; margin: 4px 8px; }
 
 /* Projects page */
 QLabel#cardTitle { font-size: 15px; font-weight: 700; color: #ffffff; }
