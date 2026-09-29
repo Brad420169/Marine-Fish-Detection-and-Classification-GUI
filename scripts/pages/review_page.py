@@ -1,4 +1,4 @@
-"""Explicit review decisions, inline annotation, crop inspection and video export."""
+"""Explicit review decisions, inline annotation, and crop inspection."""
 import json
 from uuid import uuid4
 from pathlib import Path
@@ -8,15 +8,13 @@ from PyQt6.QtCore import QEvent, QRect, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QGroupBox, QApplication, QSizePolicy, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QCompleter, QDialog, QHBoxLayout, QLabel,
-    QInputDialog, QMessageBox, QPushButton, QRubberBand, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
+    QInputDialog, QLineEdit, QMessageBox, QPushButton, QRubberBand, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
 )
 
-from review_summary import RefreshWorker
-from model_evaluation import confirm_review_frame, evaluate_run
-from pages.evaluation_page import EvaluationPage
-from paths import open_path
+from review_summary import RefreshWorker, results_need_refresh
+from model_evaluation import confirm_review_frame
 from pipeline import format_timestamp
-from review_io import (ReviewVideoWorker, context_for, draw_review,
+from review_io import (context_for, draw_review,
                        load_review_rows, load_species_names, save_rows)
 
 
@@ -173,6 +171,7 @@ class ReviewPage(QWidget):
         self.flagged_frames = []; self.detections_by_frame = {}
         self.frame_number = 1; self.total_frames = 0; self.fps = 25.0; self.selected = 0
         self.raw = None; self.canvas = None; self.worker = None; self.loading = False
+        self.after_refresh = None
         self._layout_timer = QTimer(self)
         self._layout_timer.setSingleShot(True)
         self._layout_timer.timeout.connect(self.render)
@@ -207,7 +206,7 @@ class ReviewPage(QWidget):
         panel_hint = QLabel('<ul style="-qt-list-indent:0; margin-left:8px; margin-top:0px;">'
                             '<li>Annotate missed fish detection</li>'
                             '<li>Select species</li>'
-                            '<li>Enter and Confirm &amp; Next to save</li>'
+                            '<li>Enter to save the annotation; Enter again to confirm the frame</li>'
                             '<li>Remove latest annotation with CTRL+Z</li>'
                             '</ul>')
         panel_hint.setTextFormat(Qt.TextFormat.RichText)
@@ -261,15 +260,6 @@ class ReviewPage(QWidget):
         self.skip = self.button(nav,'Skip',lambda:self.navigate(1))
         self.confirm = self.button(nav,'Confirm && Next  →',self.confirm_frame)
         self.confirm.setObjectName('confirmButton')
-        actions = QHBoxLayout(); root.addLayout(actions)
-        self.refresh = self.button(actions,'Refresh Results',self.refresh_results)
-        self.export = self.button(actions,'Regenerate reviewed video',self.regenerate)
-        self.open_video = self.button(actions,'Open video',lambda:open_path(self.reviewed_video))
-        self.evaluate_button = self.button(actions,'Evaluate AI model',self.evaluate_model)
-        self.evaluate_button.setToolTip('Compare original predictions with saved reviews. Confirm every fish in a frame, including misses, before evaluating.')
-        self.open_video.setEnabled(False)
-        # Modified shortcuts avoid interfering with species completion or text editing.
-        QShortcut(QKeySequence('Ctrl+Return'),self,activated=self.confirm_frame)
         QShortcut(QKeySequence('Alt+Right'),self,activated=lambda:self.navigate(1))
         QShortcut(QKeySequence('Alt+Left'),self,activated=lambda:self.navigate(-1))
 
@@ -306,8 +296,6 @@ class ReviewPage(QWidget):
                                   if any(r['review_status'] not in ('confirmed','rejected')
                                          for r in self.rows if r['frame_number']==n)),
                                  self.flagged_frames[0] if self.flagged_frames else 1)
-        self.reviewed_video=self.video
-        self.open_video.setEnabled(bool(self.reviewed_video and self.reviewed_video.exists()))
         self.show_frame()
 
     def open_source(self):
@@ -407,6 +395,7 @@ class ReviewPage(QWidget):
         self.table.setCellWidget(index,3,self.decision_widget(index))
         species.activated.connect(lambda _, i=index: self.select_row(i,2))
         species.currentTextChanged.connect(self.render)
+        species.lineEdit().returnPressed.connect(self.confirm_frame)
         self.style_decision(index)
 
     # The app-wide sheet gives every QPushButton a 30px minimum and wide padding, which
@@ -477,8 +466,6 @@ class ReviewPage(QWidget):
         self.previous.setEnabled(not self.worker and self.next_frame_number(-1)!=self.frame_number)
         self.skip.setEnabled(not self.worker and self.next_frame_number(1)!=self.frame_number)
         self.confirm.setEnabled(not self.worker and self.raw is not None)
-        self.evaluate_button.setEnabled(bool(self.path and self.root) and not self.worker)
-        self.export.setEnabled(bool(self.video and self.video.exists() and self.rows) and not self.worker)
         self.review_only.setEnabled(bool(self.cap) and not self.worker)
 
     def drafts(self):
@@ -589,7 +576,7 @@ class ReviewPage(QWidget):
         self.selected=position;self.table.selectRow(position)
         self.loading=False
         self.status.setText(f'Saved "{species}" on frame {self.frame_number}. '
-                            'Click Refresh Results to apply it to the summary, charts and Max-N.')
+                            'Confirm the frame, then open Results to update the summary and charts.')
         self.update_controls();self.render()
 
     def all_rows(self):
@@ -712,6 +699,15 @@ class ReviewPage(QWidget):
                 and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)):
             self.navigate(1 if event.key() == Qt.Key.Key_Right else -1)
             return True
+        if (event.type() == QEvent.Type.KeyPress and self.isVisible()
+                and isinstance(obj, QWidget) and obj.window() == self.window()
+                and (obj is self or self.isAncestorOf(obj))
+                and not isinstance(obj, QLineEdit)
+                and not isinstance(QApplication.focusWidget(), QLineEdit)
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            self.confirm_frame()
+            return True
         return super().eventFilter(obj, event)
 
     def jump_to_frame(self, _link=None):
@@ -733,7 +729,15 @@ class ReviewPage(QWidget):
         self.frame_number=self.next_frame_number(1);self.show_frame()
 
     def leave(self):
-        if not self.worker and self.discard_ok():self.on_back()
+        if self.leave_to(self.on_back): self.on_back()
+
+    def leave_to(self, callback):
+        if self.worker or not self.discard_ok():
+            return False
+        if self.root and results_need_refresh(self.root):
+            self.refresh_results(callback)
+            return False
+        return True
 
     def confirm_frame(self):
         if self.worker or self.raw is None:return
@@ -788,7 +792,7 @@ class ReviewPage(QWidget):
             temporary=target.with_name(target.stem+'.tmp.jpg')
             if not cv2.imwrite(str(temporary),draw_review(self.raw,self.current(),context=self.frame_context())):raise OSError('Could not write reviewed image.')
             temporary.replace(target)
-            self.status.setText('Saved to review CSV and reviewed_frames. Click Refresh Results to apply these decisions to the summary.')
+            self.status.setText('Frame confirmed. Results will update when you leave Review Detections.')
         except OSError as exc:self.status.setText(f'CSV saved; reviewed image failed: {exc}. You can confirm again to retry.')
         self.advance()
 
@@ -817,29 +821,16 @@ class ReviewPage(QWidget):
             context.write_text(json.dumps(self.frame_context()),encoding='utf-8')
         return relative
 
-    def evaluate_model(self):
-        if self.worker or not self.path or not self.root:
-            return
-        try:
-            report = evaluate_run(self.root, self.path)
-        except (OSError, ValueError, KeyError) as exc:
-            QMessageBox.information(self, 'Evaluation unavailable', str(exc))
-            return
-        EvaluationPage(report, self).exec()
-
-    def refresh_results(self):
-        if self.worker or not self.path:
-            return
-        if not self.discard_ok():
-            return
+    def refresh_results(self, callback):
+        self.after_refresh = callback
         self.worker = RefreshWorker(self.root, self.path, self)
-        for button in (self.back,self.previous,self.skip,self.confirm,self.export,self.refresh):
+        for button in (self.back,self.previous,self.skip,self.confirm):
             button.setEnabled(False)
         self.table.setEnabled(False)
         self.status.setText('Refreshing results from saved review decisions…')
         self.worker.succeeded.connect(self.refreshed)
-        self.worker.failed.connect(lambda error: QMessageBox.critical(self,'Cannot refresh results',error))
-        self.worker.finished.connect(self.export_finished)
+        self.worker.failed.connect(self.refresh_failed)
+        self.worker.finished.connect(self.refresh_finished)
         self.worker.start()
 
     def refreshed(self, species, missing_images):
@@ -849,29 +840,14 @@ class ReviewPage(QWidget):
         self.status.setText(message)
         self.results_refreshed.emit()
 
-    def regenerate(self):
-        if self.worker or not self.video:return
-        if not self.discard_ok():return
-        decided=[r for r in self.rows if r['review_status'] in ('confirmed','rejected')]
-        if not decided:
-            QMessageBox.information(self,'Nothing saved','Confirm a frame before regenerating the video.');return
-        missing_context=any(not (self.root/'review_frames'/f"frame_{r['frame_number']:06d}.json").exists() for r in decided)
-        message='Replace the annotated video with saved review decisions? The current annotated output will be overwritten.'
-        if missing_context:message+='\n\nThis older run lacks full detection context. Replaced frames will show only flagged detections; confident detection overlays on those frames cannot be reconstructed. Rerun detection to retain all overlays.'
-        if QMessageBox.question(self,'Regenerate video',message)!=QMessageBox.StandardButton.Yes:return
-        self.worker=ReviewVideoWorker(self.video,self.root,[dict(r) for r in self.rows],self)
-        for button in (self.back,self.previous,self.skip,self.confirm,self.export,self.refresh):button.setEnabled(False)
-        self.table.setEnabled(False)
-        self.worker.progress.connect(lambda n:self.status.setText(f'Regenerating reviewed video: {n}%'))
-        self.worker.succeeded.connect(self.exported)
-        self.worker.failed.connect(lambda error:QMessageBox.critical(self,'Video regeneration failed',error))
-        self.worker.finished.connect(self.export_finished);self.worker.start()
+    def refresh_failed(self, error):
+        self.after_refresh = None
+        QMessageBox.critical(self,'Cannot refresh results',error)
 
-    def exported(self,path):
-        self.reviewed_video=Path(path);self.open_video.setEnabled(True);self.status.setText(f'Reviewed video saved: {path}')
-
-    def export_finished(self):
-        worker=self.worker;self.worker=None;worker.deleteLater();self.back.setEnabled(True);self.refresh.setEnabled(True);self.table.setEnabled(True);self.show_frame()
+    def refresh_finished(self):
+        worker=self.worker;self.worker=None;worker.deleteLater();self.back.setEnabled(True);self.table.setEnabled(True);self.show_frame()
+        callback, self.after_refresh = self.after_refresh, None
+        if callback: callback()
 
     def shutdown(self):
         self._layout_timer.stop()

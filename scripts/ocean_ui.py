@@ -50,10 +50,12 @@ class OceanShell(OceanBackground):
         nav = QVBoxLayout(sidebar);nav.setContentsMargins(8,16,8,18);nav.setSpacing(8)
         self.buttons = {}
         for key, label in [('projects','▱   Projects'),('detection','▶   Run Detection'),
-                           ('results','▥   Results'),('review','Review Detections')]:
+                           ('review','Review Detections'),('results','▥   View Results'),
+                           ('train','Train a Model')]:
             button = QPushButton(label);button.setObjectName('navButton');button.setCheckable(True)
-            if key == 'review':
-                button.setIcon(QIcon(str(ROOT_DIR/'assets'/'search.svg')))
+            if key in ('review', 'train'):
+                icon = 'search.svg' if key == 'review' else 'train.svg'
+                button.setIcon(QIcon(str(ROOT_DIR/'assets'/icon)))
                 button.setIconSize(QSize(18, 18))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, target=key:navigate(target))

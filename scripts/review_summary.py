@@ -164,6 +164,14 @@ def refresh_results(root, review_csv):
     return len(rows), len(snapshots) < len(rows)
 
 
+def results_need_refresh(root):
+    root = Path(root)
+    confirmation = root / 'review_completion.json'
+    reviewed = root / 'reviewed_detections.csv'
+    return confirmation.is_file() and (not reviewed.is_file() or
+            confirmation.stat().st_mtime_ns > reviewed.stat().st_mtime_ns)
+
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 

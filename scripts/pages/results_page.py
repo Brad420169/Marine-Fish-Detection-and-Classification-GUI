@@ -28,11 +28,13 @@ class ResultsPage(QWidget):
         on_run_another,
         on_projects,
         on_review=None,
+        on_train=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._on_review = on_review
+        self._on_train = on_train
 
         self.outputs: dict[str, Path] = {}
         self.output_dir: Path | None = None
@@ -163,11 +165,14 @@ class ResultsPage(QWidget):
             self._open_output_folder
         )
         results_layout.addWidget(self.open_folder_btn)
-        for button in (self.open_video_btn, self.open_summary_btn, self.open_folder_btn):
+        self.train_btn = QPushButton('   Train a Model')
+        self.train_btn.setIcon(QIcon(str(ROOT_DIR / 'assets' / 'train.svg')))
+        self.train_btn.setIconSize(QSize(20, 20))
+        self.train_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.train_btn.clicked.connect(lambda: self._on_train(self.output_dir) if self._on_train else None)
+        results_layout.addWidget(self.train_btn)
+        for button in (self.open_video_btn, self.open_summary_btn, self.open_folder_btn, self.train_btn):
             button.setStyleSheet("text-align: left; padding-left: 22px;")
-
-        summary_row.addWidget(results_group,1)
-
 
         # Review Low-Confidence Frames widget
         self.review_group = QGroupBox("Review Detections")
@@ -189,7 +194,7 @@ class ResultsPage(QWidget):
         review_layout.addWidget(self.review_btn)
 
         summary_row.addWidget(self.review_group,1)
-
+        summary_row.addWidget(results_group,1)
 
 
 

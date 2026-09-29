@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QProcess, Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QBoxLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -21,11 +21,13 @@ from ocean_ui import OceanShell
 from paths import ICON_PATH
 from widgets import VideoPathRow, WeightsRow, LabeledSlider
 from charts import _read_summary_csv
+from review_summary import results_need_refresh
 from pipeline import RunConfig
 from worker import PipelineWorker
 from project_manager import Project, RunRecord
 from pages.results_page import ResultsPage
 from pages.review_page import ReviewPage
+from pages.training_page import TrainingPage
 from pages.project_page import ProjectsPage
 
 
@@ -249,6 +251,7 @@ class MainWindow(QMainWindow):
             on_run_another=self._show_detection_page,
             on_projects=self._back_to_projects,
             on_review=self._open_review,
+            on_train=self._open_training,
         )
         self.pages.addWidget(self.results_page)
 
@@ -257,26 +260,45 @@ class MainWindow(QMainWindow):
         self.review_page = ReviewPage(on_back=self._show_results_page)
         self.review_page.results_refreshed.connect(self._reload_reviewed_results)
         self.pages.addWidget(self.review_page)
+        self.training_page = TrainingPage()
+        self.pages.addWidget(self.training_page)
         self.shell = OceanShell(self.pages, project, self._navigate_shell)
         self.setCentralWidget(self.shell)
         self.pages.currentChanged.connect(self._sync_sidebar)
         self.pages.setCurrentWidget(self.detection_page if project else self.projects_page)
         self._sync_sidebar()
 
+    def closeEvent(self, event):
+        if self.training_page.export_worker and self.training_page.export_worker.isRunning():
+            QMessageBox.information(self, 'Export in progress', 'Wait for the dataset export to finish before closing.')
+            event.ignore()
+            return
+        if self.training_page.process.state() != QProcess.ProcessState.NotRunning:
+            if QMessageBox.question(self, 'Training in progress', 'Stop the current training or evaluation and close?') != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.training_page.process.kill()
+            self.training_page.process.waitForFinished(3000)
+        super().closeEvent(event)
+
     def _sync_sidebar(self, *_args):
         current = self.pages.currentWidget()
         for key, page in [('projects',self.projects_page),('detection',self.detection_page),
-                          ('review',self.review_page),('results',self.results_page)]:
+                          ('review',self.review_page),('results',self.results_page),
+                          ('train',self.training_page)]:
             self.shell.buttons[key].setChecked(current is page)
         # Everything past Projects needs a project open, and results need a finished run.
         available = bool(self.project) and bool(self.results_page.outputs)
         self.shell.buttons['detection'].setEnabled(bool(self.project))
         self.shell.buttons['review'].setEnabled(available)
         self.shell.buttons['results'].setEnabled(available)
+        self.shell.buttons['train'].setEnabled(available)
 
     def _navigate_shell(self, target):
         if self.pages.currentWidget() is self.review_page:
-            if self.review_page.worker or not self.review_page.discard_ok():
+            if target == 'review':
+                return
+            if not self.review_page.leave_to(lambda: self._navigate_shell(target)):
                 self._sync_sidebar()
                 return
         if target == 'projects':
@@ -287,6 +309,8 @@ class MainWindow(QMainWindow):
             self.pages.setCurrentWidget(self.results_page)
         elif target == 'review' and self.pages.currentWidget() is not self.review_page:
             self._open_review(self.results_page.outputs,self.results_page.output_dir)
+        elif target == 'train' and self.results_page.output_dir:
+            self._open_training(self.results_page.output_dir)
         self._sync_sidebar()
 
 
@@ -415,7 +439,10 @@ class MainWindow(QMainWindow):
             model_name=record.model_name,
             output_dir=output_dir,
         )
-        self.pages.setCurrentWidget(self.results_page)
+        if results_need_refresh(output_dir):
+            self._open_review(outputs, output_dir)
+        else:
+            self.pages.setCurrentWidget(self.results_page)
 
     def _open_review(self, outputs: dict, output_dir: Path) -> None:
         """Launch the low-confidence review page for the current results."""
@@ -425,6 +452,10 @@ class MainWindow(QMainWindow):
             video_path=outputs.get("video"),
         )
         self.pages.setCurrentWidget(self.review_page)
+
+    def _open_training(self, output_dir: Path) -> None:
+        self.training_page.set_run(output_dir)
+        self.pages.setCurrentWidget(self.training_page)
 
     def _reload_reviewed_results(self) -> None:
         page = self.results_page
@@ -606,10 +637,8 @@ class MainWindow(QMainWindow):
             output_dir=self._pending_output_dir,
         )
 
-        # Switch from Detection page -> Results page.
-        self.pages.setCurrentWidget(
-            self.results_page
-        )
+        # The review workflow comes before viewing the refreshed results.
+        self._open_review(self.outputs, self._pending_output_dir)
 
     def _on_cancelled(self) -> None:
         self.run_btn.setEnabled(True)
