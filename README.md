@@ -83,46 +83,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_short
 
 The script creates shortcuts on your actual Desktop (including a redirected OneDrive Desktop) and in the Start menu. Execution-policy bypass applies only to that PowerShell process.
 
-### Linux (Ubuntu/Debian)
+### Linux and macOS
 
-**1. Install Pixi, then use it to install Git and Git LFS.** Open Terminal. If `curl` is missing, install it with `sudo apt update && sudo apt install -y curl` (or your distribution's package manager).
+- **Linux:** Ubuntu 24.04 is the reference platform. If `curl` is missing, install it with `sudo apt update && sudo apt install -y curl` (or your distribution's package manager).
+- **macOS:** use macOS 13 or newer on an Apple Silicon (M-series) Mac with a native ARM64 terminal, not Rosetta. Intel Macs are not configured. Real-Mac validation is still pending. Detection initially uses **CPU**; YOLO training selects **MPS** when available and needs separate testing.
 
-```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-```
-
-Close and reopen Terminal, then run:
-
-```bash
-pixi global install git git-lfs
-git --version
-git lfs version
-```
-
-**2. Choose an installation directory, download the app, and create the icon.** Change the first path if you prefer another location. The parentheses keep error handling within this setup block.
-
-```bash
-(
-    set -e
-    INSTALL_DIR="$HOME/MarineApps"
-    mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-    cd Marine-Fish-Detection-and-Classification-GUI
-    git lfs install --local
-    git lfs pull
-    pixi install
-    bash setup/create_linux_shortcut.sh
-)
-```
-
-The script creates the desktop icon and application-menu entry. It supports desktop folders with localized names. If your desktop asks, right-click the icon and choose **Allow Launching**. Some Linux desktop environments display launchers only in the application menu.
-
-### macOS (Apple Silicon; pending real-Mac validation)
-
-Use macOS 13 or newer and a native ARM64 terminal on an M-series Mac, not a terminal running under Rosetta. The environment includes macOS PyTorch wheels; detection initially runs on **CPU**. YOLO training already selects Apple's **MPS** GPU backend when available, but that path still needs testing on a Mac. Intel Macs (`osx-64`) are not configured.
-
-**1. Install Pixi, then use it to install Git and Git LFS.** Homebrew is not required. Open Terminal:
+**1. Install Pixi, then use it to install Git and Git LFS.**
+Open Terminal:
 
 ```bash
 curl -fsSL https://pixi.sh/install.sh | bash
@@ -138,7 +105,7 @@ git lfs version
 
 These tools are installed globally so Git is available before cloning the repository.
 
-**2. Download the app, install the environment, and create the desktop app.**
+**2. Choose an installation directory, download the app, and create the icon.** Change `INSTALL_DIR` if you prefer another location. The commands automatically select the shortcut script for your operating system. The parentheses keep error handling within this setup block.
 
 ```bash
 (
@@ -151,11 +118,18 @@ These tools are installed globally so Git is available before cloning the reposi
     git lfs install --local
     git lfs pull
     pixi install --locked
-    bash setup/create_macos_shortcut.sh
+    case "$(uname -s)" in
+        Linux) bash setup/create_linux_shortcut.sh ;;
+        Darwin) bash setup/create_macos_shortcut.sh ;;
+        *) echo "Unsupported operating system" >&2; exit 1 ;;
+    esac
 )
 ```
 
-The script creates **Marine Fish Detection GUI.app** on the Desktop, including its icon. If macOS blocks the unsigned launcher, right-click it and choose **Open**. The script does not disable Gatekeeper or remove quarantine attributes.
+`--locked` installs the versions recorded in `pixi.lock` without updating it. Pixi selects the dependencies for your operating system automatically.
+
+- **Linux:** the script creates a desktop icon and application-menu entry, including support for localized desktop folder names. If prompted, right-click the icon and choose **Allow Launching**. Some desktop environments display launchers only in the application menu.
+- **macOS:** the script creates **Marine Fish Detection GUI.app** on the Desktop with its icon. If macOS blocks the unsigned launcher, right-click it and choose **Open**. The script does not disable Gatekeeper or remove quarantine attributes.
 
 **First Mac test:** start with `pixi run GUI` from the repository so errors remain visible in Terminal. Create a project, load a short video, run each model type you use (YOLO `.pt` and/or RF-DETR `.pth`), review detections, and open results and output files. Separately test YOLO training if needed, then close the app and test the desktop launcher. CPU detection can be slow.
 
@@ -169,242 +143,120 @@ Double-click **Marine Fish Detection GUI** on your Desktop. Keep the repository 
 
 ## Using the Application
 
-### 1. Create a Project
+The screenshots below show the current desktop GUI with an existing example project. Your project names, paths, models, and detection counts will differ. Click a screenshot to view it at full size.
 
+### 1. Create or open a project
 
-When the application opens:
+Start on **Projects**. Click **New Project**, enter a name, choose an output folder, and click **Create**. Detection runs are organised under that project.
 
-1. Enter a project name.
-2. Select where you want detection results to be stored.
-3. Click **Create**.
+![Projects page with New Project, Open Project, recent projects, search, filters, and project details](./assets/screenshots/projects.png)
 
-<p align="left">
-<img src="./assets/projects_page.png" height="400"/>
-</p>
+The creation dialog asks for both a project name and an output location:
 
-Your detection runs will be organised under this project.
+![New project dialog with name and output folder fields](./assets/screenshots/new-project.png)
 
-### 2. Select a Video
+To continue an existing project, select it under **Recent Projects** and click **Open Project**, or use the **Open** button on its card. Use the search, sort, and filter controls on the right to find projects. **View All** expands the recent-project list.
 
-Select a video using the **Video Input** section or drag and drop a video directly into the application.
+### 2. Select a video and model
 
-### 3. Select a Model
+Opening a project takes you to **Run Detection**:
 
-Choose a marine fish detection model from the **Model Input** section.
+![Run Detection page with video input, model selector, detection settings, and past runs](./assets/screenshots/detection.png)
 
-The application includes default detection models.
+1. In **Video Input**, click **Browse…** or drop a video onto the dashed area.
+2. In **Model Input**, choose installed model weights. Use **Add model weights…** to import compatible YOLO `.pt` or RF-DETR `.pth` weights.
+3. Set the detection and review thresholds:
 
-You can add additional YOLO & RF-DETR model weights using **Add model weights**.
-
-### 4. Configure Detection Settings
-
-The following parameters can be adjusted before running detection:
-
-| Setting | Description |
+| Setting | What it changes |
 |---|---|
-| **Detection confidence** | Minimum confidence required for a detection to be accepted |
-| **Overlap sensitivity** | Controls how overlapping detection boxes are handled (Higher values can capture closely bundled fish more accurately, at the cost of occasional double/triple detections)|
-| **Flag for review below** | Accepted detections below this confidence are flagged for manual review |
+| **Minimum detection confidence** | The minimum score a model detection needs to be accepted. Lower values admit more detections, including potentially more false positives. |
+| **Flag for review below** | Accepted detections below this score are flagged for manual review. This does not change which detections the model accepts. |
 
-Change values using either the slider or the numeric field.
+Use either the sliders or numeric fields. The defaults are **0.25** for detection and **0.50** for review. Hover over a setting for help. Overlap sensitivity is no longer a GUI control; the run configuration uses a fixed IoU threshold of **0.80** where supported by the detector.
 
-Hover over a parameter name in the application for additional information.
+### 3. Run detection
 
-The default values provide a reasonable starting point.
+Click **Run Detection** at the bottom of the page; scroll down if needed. The progress and status panels show frames processed, processing device, speed, elapsed time, and estimated time remaining. **Cancel** stops the active run.
 
-### 5. Run Detection
+When processing finishes, the app opens **Review Detections**. Review the predictions before returning to Results. To reopen an existing run without reprocessing its video, click its entry under **Past Runs** on the Run Detection page. A run with saved review edits awaiting a results refresh opens in review first.
 
-Click **▶ Run Detection**.
+## Review Detections
 
-While the video is being processed, the application displays:
+The review page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
 
-- Detection progress
-- Frames processed
-- Processing speed
-- Elapsed time
-- Estimated time remaining
-- Processing device
+![Review Detections showing a fish frame, species editor, confirm and reject icons, and navigation controls](./assets/screenshots/review.png)
 
-The **Results** page opens automatically when processing is complete.
+### Inspect and correct predictions
 
-<p align="center">
-<img src="./assets/main_page.png" height="600"/>
-</p>
+1. Select a detection in the frame or table to inspect its **Zoom / Preview** crop. **Full resolution** opens a larger view.
+2. Correct its **Reviewed species** if needed.
+3. Use the tick to keep a detection or the cross to reject a false positive or duplicate. Crossed rows are struck out and their boxes disappear; the tick can undo a rejection before saving.
+4. Click **Confirm & Next** to save the frame's decisions and advance. Confirm frames that are already correct too.
 
----
+Resolved rows are hidden from the table. Click their boxes on the image to reopen their species editor. Rejecting a manual annotation deletes it when confirmed; rejecting a model detection records the rejection so refreshed statistics can exclude it.
+
+### Choose which frames to review
+
+**Review frames only** is enabled by default. **Previous**, **Skip**, and **Confirm & Next** then move between flagged frames. Untick it to inspect every frame, including confident predictions and fish the model missed.
+
+Click the frame counter to jump to a frame number. When the original source video is unavailable, review is limited to saved flagged frames and the checkbox is disabled. **Skip** moves on without confirming the frame; navigation prompts before discarding unsaved edits.
+
+### Add missed fish
+
+Drag a box around a missed fish in the main image, then choose its species in the **Annotations** panel. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
+
+For small fish, use **Ctrl+scroll** to zoom, **scroll** to pan vertically, and **Shift+scroll** to pan sideways. Boxes are saved in the original frame coordinates regardless of zoom.
+
+Manual annotations contribute to detection counts and Max-N after the results refresh. They do not invent model confidence scores or track IDs; mean confidence uses model detections only.
+
+### Return to refreshed results
+
+After confirming your edits, click **Back to Results** or navigate away using the sidebar. The app automatically rebuilds results when saved review decisions require it; wait for that refresh to finish. There is no separate **Refresh Results** button in the current GUI.
+
+The refresh rebuilds `track_summary.csv`, charts, and available Max-N examples from the original predictions plus saved decisions. It also writes `reviewed_detections.csv` and preserves the initial summary as `track_summary_original.csv`. Unreviewed predictions retain their original labels. Refreshing does not rerun tracking, and repeated refreshes start from `original_detections.json` rather than accumulating changes.
+
+Older runs without original detection data must be reprocessed before their summaries can be refreshed accurately. Missing source images can prevent individual Max-N examples from being regenerated. The annotated-video button opens the existing output video; the current GUI does not expose a reviewed-video regeneration action.
 
 ## Results
 
-The Results page provides a summary of the completed detection run and access to its generated outputs.
+Use **View Results** in the sidebar or **Back to Results** after review. The page shows the selected run, species and detection totals, output shortcuts, and summary charts.
 
-### Annotated Video
+![Detection Results with run details, review and output buttons, and abundance charts](./assets/screenshots/results.png)
 
-The annotated video contains detected fish with:
+### Open outputs
 
-- Bounding boxes
-- Species classifications
-- Confidence scores
-- Frame numbers
-- Video timestamps
+| Action | What it opens |
+|---|---|
+| **Open Annotated Video** | The generated video with detection boxes, species labels, and confidence scores. |
+| **Open Summary CSV** | `track_summary.csv`, with species-level Max-N, timing, visible duration, track counts, detection counts, and mean confidence. |
+| **Open Output Folder** | The run directory containing its generated files. |
+| **Start Review** | The review page for this run. |
+| **Train a Model** | Dataset export and YOLO training from confirmed review frames. |
 
-You can open the video directly from the Results page.
+The run directory also contains `low_confidence_review.csv` for flagged detections and saved review decisions. Output buttons are disabled when the corresponding file is unavailable.
 
-### Detection Summary
+### Charts and Max-N examples
 
-The application generates:
+Scroll down to see peak abundance (**Max-N**), total detections, visible span, and mean detection confidence by species. Max-N is the largest number of fish of a species visible in a single frame, rather than a count of unique fish across the whole video.
 
-**`track_summary.csv`**
+![Lower Results page showing visible-span and confidence charts plus example Max-N frames](./assets/screenshots/results-charts.png)
 
-This contains species-level information including:
+The example frames show available Max-N observations with the relevant fish highlighted. After review, the refreshed charts and examples reflect saved corrections and manual annotations.
 
-- Species
-- Max-N
-- Max-N timestamp
-- First and last observation
-- Visible duration
-- Unique tracks (generated by AI tracker BotSort/ByteTrack)
-- Total detections
-- Mean detection confidence
+## Train a Model
 
-### Low-Confidence Review
+Open **Train a Model** from Results or the sidebar after loading a run.
 
-The application generates:
+![Train a Fish Detector page showing dataset split controls, export destination, and YOLO training settings](./assets/screenshots/training.png)
 
-**`low_confidence_review.csv`**
+1. Fully review and confirm the frames you want to use. Inspect all predictions and add missed fish before confirming; empty confirmed frames become background examples.
+2. Under **Export reviewed frames**, choose training and validation percentages. The remaining percentage is held out for testing. Frames are split in time order to reduce overlap between sets.
+3. Choose a destination and click **Generate AI Training Data**.
+4. Under **Train with Ultralytics YOLO**, select the generated `data.yaml` and a starting YOLO `.pt` model. RF-DETR `.pth` weights cannot be trained with this trainer.
+5. Set epochs, batch size, patience, image size, and run name, then click **Start Training**. Scroll down to follow the log or use **Stop Training** if needed.
+6. After training succeeds, use **Evaluate Test Set** for the held-out test frames. This is separate from inspecting predictions in Review Detections.
 
-This contains accepted detections below the selected review threshold, so you can identify uncertain detections for manual inspection.
-
-### Max-N Example Frames
-
-Example frames are saved for reported Max-N observations, with the relevant detections highlighted.
-
-These can be used to visually inspect the fish contributing to the Max-N estimate.
-
-### Summary Charts
-
-The Results page includes charts showing:
-
-- Peak abundance (Max-N)
-- Total detections
-- Visible duration
-- Mean detection confidence
-
-<p align="center">
-<img src="./assets/results.png" height="400"/>
-</p>
-
-Results can also be exported as a summary figure.
-
-### Past Runs
-
-You can reopen previous detection runs from the **Past Runs** section without reprocessing the video.
-
----
-## Review Step - Correct AI Predictions and Missed Detections
-
-### Refreshing results after review
-
-After saving decisions with **Confirm & Next**, click **Refresh Results** on the
-review page. The application rebuilds `track_summary.csv`, the Results charts,
-and available Max-N examples from the original per-frame detections plus saved
-review decisions. It also writes `reviewed_detections.csv`, containing all
-remaining detections, and preserves the initial summary as
-`track_summary_original.csv`.
-
-Each row in the detection table has a **✓** and a **✕** in its Decision column.
-The tick is set by default, so a frame that looks right can be accepted as a
-whole with **Confirm & Next**; correct a species first and the tick keeps it.
-The cross drops the detection: a model detection is recorded as rejected and
-removed from the refreshed statistics, while a manual annotation is deleted from
-the review CSV outright. Crossed rows are struck out and their boxes disappear
-from the frame straight away, but nothing is written until **Confirm & Next**,
-so a cross can be undone with the tick.
-
-Confirmed species corrections replace the original label. Detections on frames
-you have not reviewed yet retain their original prediction. Confidence values
-remain the model's scores;
-reviewing does not rerun tracking or create new track IDs. Refreshing repeatedly
-is safe: each refresh starts from `original_detections.json`, not the previously
-refreshed summary.
-
-Older runs without `original_detections.json` must be rerun before their summaries
-can be refreshed accurately. If source images are unavailable, missing Max-N
-examples are omitted rather than showing stale examples. Video regeneration is a
-separate action using **Regenerate reviewed video**.
-
-### Reviewing flagged frames or the whole video
-
-The review page can work through flagged frames only or through every frame of
-the video, controlled by the **Review frames only** tick box (on by default):
-
-- **Ticked** — **Previous**, **Skip**, **Confirm & Next** and the left/right
-  arrow keys move between flagged frames, so you only see detections the model
-  was unsure about.
-- **Unticked** — the same controls step one video frame at a time, so you can
-  work through footage the model was confident about, or missed entirely.
-
-Either way the counter reads the absolute position in the video, for example
-`Frame 412 / 9000`, followed by the timestamp and how many flagged frames have
-been reviewed. Click it to jump straight to any frame number. Frames are read
-from the original source video, so unflagged frames are available without
-rerunning detection. If the source video cannot be found, only flagged frames
-can be reviewed and the tick box is disabled.
-
-### Adding missed fish during review
-
-Drag a box directly on the frame around any fish the model missed. Each box
-appears in the **Annotations** panel on the left, where you choose its species
-or **Remove** it, and is shown enlarged on the right just like a flagged
-detection, so you can check what you have boxed. A plain click without dragging
-still selects a detection instead.
-
-Pressing **Enter** in a box's species field saves it straight away: the box
-leaves the Annotations panel and appears in the detection table below as a
-confirmed manual annotation, without moving off the frame, so several missed
-fish can be boxed and named one after another. Boxes you leave in the panel are
-saved with the rest of the frame's decisions when you click **Confirm & Next**
-instead; leaving the frame first prompts before discarding them.
-
-Small or distant fish are easier to box accurately zoomed in. **Ctrl+scroll** on
-the frame zooms about the mouse pointer, up to 12×, keeping whatever is under the
-pointer in place; the current level is shown next to the frame counter. Once
-zoomed, **scroll** pans up and down and **Shift+scroll** pans sideways, and
-Ctrl+scrolling back out returns to the whole frame. Zoom only changes what you
-see: boxes are always recorded in full-resolution frame coordinates, and the
-level is kept as you move between frames so you can watch one area across the
-video.
-
-Manual rows have `annotation_source=manual` and a stable `annotation_id`. Their
-confidence and track ID are blank: manual fish increase detection counts and
-Max-N after **Refresh Results**, but do not invent tracks or model confidence.
-Mean confidence uses model detections only; species with only manual annotations
-show no model confidence. **Regenerate reviewed video** includes saved manual
-boxes. To remove a saved manual annotation, cross it out and confirm the frame.
-
-Annotating a frame that was not flagged saves that frame's image and detection
-context alongside the flagged ones, so it joins the review CSV and is rebuilt
-correctly by **Refresh Results** and **Regenerate reviewed video**.
-
-
-Regenerating a reviewed video now **replaces the annotated output video** at its
-existing path, so the Results page opens the updated version. The first original
-annotated video is retained under `.original_video/` in the run folder. Every
-regeneration starts from that backup and the saved review decisions. The baseline is retained internally for repeatable regeneration; there is no restore action in the GUI. The source input video is
-never modified. A failed regeneration leaves the current output video intact.
-
-### Evaluate the AI model
-
-Click **Evaluate AI model** beside **Open video** on the Review page. The three headline scores separate finding fish from identifying them:
-
-- **Detection precision:** detected fish divided by all predictions, regardless of species. Rejected or duplicate predictions reduce precision; species corrections do not.
-- **Detection recall:** detected fish from trained species divided by all reviewed fish from trained species. A recall of 0.91 means 9% of those fish were not detected. A detected fish still counts if its species was corrected.
-- **Species accuracy:** correct species labels divided by detected fish from trained species. Missed fish are excluded, so this measures identification after detection.
-
-Species outside the saved model class list are reported separately as detected or missed. They are excluded from trained-species recall and accuracy, but a detected fish still counts toward detection precision. The detailed trained-species table retains species-aware precision/recall: an incorrect trained label remains a false positive even when the actual fish is outside the class list. New runs preserve the class list with their original predictions; older runs use `species_names.json`. If neither supplies a class list, recall and species accuracy show **N/A** rather than guessing from observed predictions. Review labels must match the saved class names to be considered trained species.
-
-**Confirm & Next** records full-frame completion, including empty frames and unchanged confident predictions. Inspect every prediction, reject spurious or duplicate boxes, and add every missed fish before confirming. Turn off **Review frames only** to review the whole video. Partial reviews show provisional scores for their subset, not a full-video estimate. Older saved review images can establish provisional review coverage; reconfirm those frames to verify completion. Runs without original detections must be processed again before evaluation is available.
-
-Completion is stored in `review_completion.json` and tied to the original predictions and saved decisions. Later saved edits invalidate that frame's completion until it is reconfirmed. Evaluation does not change predictions or summary results. Counts are fish observations per frame, not unique fish; these are review-based precision/recall scores, not IoU or mAP measurements. Undefined scores display **N/A**.
+Training saves new weights, including `best.pt`, under the dataset's `runs` folder. Add the resulting weights through **Add model weights…** on Run Detection to use them for another video.
 
 ## Updating
 
