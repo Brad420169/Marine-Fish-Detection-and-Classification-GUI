@@ -2,7 +2,7 @@
 name = "auto-fish-detect-gui"
 version = "0.1.0"
 channels = ["conda-forge"]
-platforms = ["win-64", "linux-64"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
 
 [tasks]
 GUI = "python scripts/app.py"
@@ -17,9 +17,24 @@ pip = "*"
 supervision = ">=0.30.0,<0.31"
 
 [pypi-dependencies]
-# CUDA 12.6 retains support for the GTX 1070 (Pascal).
-torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu126" }
-torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/cu126" }
 rfdetr = ">=1.9.3,<2"
 ultralytics = ">=8.4,<9"
 lap = ">=0.5,<0.6"
+
+# Keep CUDA 12.6 on Windows/Linux for GTX 1070 (Pascal) compatibility.
+[target.win-64.pypi-dependencies]
+torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/cu126" }
+
+[target.linux-64.pypi-dependencies]
+torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/cu126" }
+
+# Apple Silicon wheels come from PyPI, not the NVIDIA CUDA index.
+[target.osx-arm64.pypi-dependencies]
+torch = "==2.7.1"
+torchvision = "==0.22.1"
+
+# RF-DETR requires this range; prevent the conda solve from pinning 0.11+.
+[target.osx-arm64.dependencies]
+pydeprecate = ">=0.9,<0.10"

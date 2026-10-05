@@ -6,6 +6,8 @@ file shortcuts, Max-N example frames, and the summary charts panel.
 """
 from __future__ import annotations
 
+from ui_icons import icon
+
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt
@@ -306,7 +308,8 @@ class ResultsPage(QWidget):
         navigation.setContentsMargins(32, 12, 32, 16)
         navigation.setSpacing(12)
 
-        back_btn = QPushButton("←  Back")
+        back_btn = QPushButton("Back")
+        back_btn.setIcon(icon("arrow_left"))
         back_btn.setObjectName("backButton")
         back_btn.setAccessibleName("Back")
         back_btn.setToolTip("Return to detection setup")

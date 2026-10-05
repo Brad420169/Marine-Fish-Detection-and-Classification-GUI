@@ -2,7 +2,7 @@
 
 A desktop application for automated marine fish detection, classification, tracking, and analysis from underwater video.
 
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux%20%7C%20macOS-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux%20%7C%20macOS%20ARM64-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-managed%20by%20Pixi-orange)
 
@@ -42,171 +42,130 @@ Here's a full demo of the application in action:
 ---
 
 ## Quick Start
-> **Requirements:** Windows or Linux (Ubuntu 24.04), and approximately **5 GB of free disk space**.
 
-### 1. Install Git and Pixi
+**Platforms:** Windows, Linux (Ubuntu 24.04), and Apple Silicon macOS (`osx-arm64`, pending real-Mac validation). Intel Macs are not included. Allow approximately **5 GB of free disk space**, plus space for videos and results.
 
-**Windows USERS** — open **PowerShell** (`Win` → type `PowerShell` → Enter):
+Each platform has a prerequisite block and an application setup block. The setup scripts create the desktop icon automatically; you do not need to paste shortcut code into your terminal.
+
+### Windows
+
+**1. Install Pixi, then use it to install Git and Git LFS.** Open PowerShell:
+
 ```powershell
-winget install --id Git.Git -e --source winget
-powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
-**Linux USERS** — open **Terminal** (`Ctrl+Alt+T`):
+Close and reopen PowerShell, then run:
+
+```powershell
+pixi global install git git-lfs
+git --version
+git lfs version
+```
+
+**2. Choose an installation directory, download the app, and create the icon.** Change `$InstallDir` if you prefer another location.
+
+```powershell
+$InstallDir = Join-Path $HOME 'MarineApps'
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Set-Location $InstallDir
+git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
+if ($LASTEXITCODE -ne 0) { throw 'Git clone failed.' }
+Set-Location Marine-Fish-Detection-and-Classification-GUI
+git lfs install --local
+if ($LASTEXITCODE -ne 0) { throw 'Git LFS setup failed.' }
+git lfs pull
+if ($LASTEXITCODE -ne 0) { throw 'Git LFS download failed.' }
+pixi install
+if ($LASTEXITCODE -ne 0) { throw 'Pixi installation failed.' }
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_shortcut.ps1
+```
+
+The script creates shortcuts on your actual Desktop (including a redirected OneDrive Desktop) and in the Start menu. Execution-policy bypass applies only to that PowerShell process.
+
+### Linux (Ubuntu/Debian)
+
+**1. Install Pixi, then use it to install Git and Git LFS.** Open Terminal. If `curl` is missing, install it with `sudo apt update && sudo apt install -y curl` (or your distribution's package manager).
+
 ```bash
-sudo apt update && sudo apt install -y git git-lfs
 curl -fsSL https://pixi.sh/install.sh | bash
 ```
 
-**macOS USERS** — open **Terminal** (`Cmd+Space`, type "Terminal"):
-```bash
-# Install Homebrew if you don't have it
-if ! command -v brew &> /dev/null; then
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
+Close and reopen Terminal, then run:
 
-brew update && brew install git git-lfs
+```bash
+pixi global install git git-lfs
+git --version
+git lfs version
+```
+
+**2. Choose an installation directory, download the app, and create the icon.** Change the first path if you prefer another location. The parentheses keep error handling within this setup block.
+
+```bash
+(
+    set -e
+    INSTALL_DIR="$HOME/MarineApps"
+    mkdir -p "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
+    cd Marine-Fish-Detection-and-Classification-GUI
+    git lfs install --local
+    git lfs pull
+    pixi install
+    bash setup/create_linux_shortcut.sh
+)
+```
+
+The script creates the desktop icon and application-menu entry. It supports desktop folders with localized names. If your desktop asks, right-click the icon and choose **Allow Launching**. Some Linux desktop environments display launchers only in the application menu.
+
+### macOS (Apple Silicon; pending real-Mac validation)
+
+Use macOS 13 or newer and a native ARM64 terminal on an M-series Mac, not a terminal running under Rosetta. The environment includes macOS PyTorch wheels; detection initially runs on **CPU**. YOLO training already selects Apple's **MPS** GPU backend when available, but that path still needs testing on a Mac. Intel Macs (`osx-64`) are not configured.
+
+**1. Install Pixi, then use it to install Git and Git LFS.** Homebrew is not required. Open Terminal:
+
+```bash
 curl -fsSL https://pixi.sh/install.sh | bash
 ```
 
-When installation finishes, **close and reopen** PowerShell/Terminal.
-
-### 2. Install the Application and Create a Desktop Shortcut
-
-**Windows USERS** (PowerShell):
-```powershell
-if (Test-Path "$HOME\OneDrive\Desktop") {
-    $DesktopDir = "$HOME\OneDrive\Desktop"
-} else {
-    $DesktopDir = "$HOME\Desktop"
-}
-cd $DesktopDir
-git lfs install
-git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-cd Marine-Fish-Detection-and-Classification-GUI
-git lfs pull
-pixi install
-
-$ProjectDir = (Get-Location).Path
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$ProjectDir\..\Marine Fish Detection GUI.lnk")
-$Shortcut.TargetPath = "$ProjectDir\launch_gui.bat"
-$Shortcut.WorkingDirectory = $ProjectDir
-$Shortcut.IconLocation = "$ProjectDir\assets\icon.ico"
-$Shortcut.Save()
-```
-
-**Linux USERS** (Terminal):
-```bash
-cd ~/Desktop
-git lfs install
-git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-cd Marine-Fish-Detection-and-Classification-GUI
-git lfs pull# Prerequisites (if not already installed):
-# brew install git git-lfs
-# curl -fsSL https://pixi.sh/install.sh | sh
-
-pixi install
-chmod +x launch_gui.sh
-
-PROJECT_DIR="$(pwd)"
-ICON_PNG="$PROJECT_DIR/assets/icon.png"
-
-DESKTOP_FILE="$HOME/.local/share/applications/marine-fish-gui.desktop"
-cat > "$DESKTOP_FILE" << EOF
-[Desktop Entry]
-Type=Application
-Name=Marine Fish Detection GUI
-Comment=Launch the Marine Fish Detection and Classification GUI
-Exec=bash -c "cd '$PROJECT_DIR' && ./launch_gui.sh"
-Icon=$ICON_PNG
-Terminal=false
-StartupWMClass=marine-fish-gui
-Categories=Utility;
-EOF
-
-chmod +x "$DESKTOP_FILE"
-cp "$DESKTOP_FILE" "$HOME/Desktop/"
-chmod +x "$HOME/Desktop/marine-fish-gui.desktop"
-gio set "$HOME/Desktop/marine-fish-gui.desktop" metadata::trusted true 2>/dev/null || true
-
-gtk-update-icon-cache "$HOME/.local/share/icons" 2>/dev/null
-nautilus -q
-```
-**MAC USERS** (Terminal):
+Close and reopen Terminal, then run:
 
 ```bash
-cd ~/Desktop
-git lfs install
-git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-cd Marine-Fish-Detection-and-Classification-GUI
-git lfs pull
-pixi install
-chmod +x launch_gui.sh
-
-PROJECT_DIR="$(pwd)"
-APP_NAME="Marine Fish Detection GUI"
-APP_DIR="$HOME/Desktop/${APP_NAME}.app"
-ICON_PNG="$PROJECT_DIR/assets/icon.png"
-
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-
-cat > "$APP_DIR/Contents/MacOS/launch" << EOF
-#!/bin/bash
-osascript -e 'tell application "Terminal" to do script "cd \\"$PROJECT_DIR\\" && ./launch_gui.sh"'
-EOF
-chmod +x "$APP_DIR/Contents/MacOS/launch"
-
-cat > "$APP_DIR/Contents/Info.plist" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key><string>launch</string>
-    <key>CFBundleIconFile</key><string>icon.icns</string>
-    <key>CFBundleIdentifier</key><string>com.brad.marinefishgui</string>
-    <key>CFBundleName</key><string>${APP_NAME}</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-</dict>
-</plist>
-EOF
-
-mkdir -p /tmp/icon.iconset
-for sz in 16 32 128 256 512; do
-  sips -z $sz $sz "$ICON_PNG" --out /tmp/icon.iconset/icon_${sz}x${sz}.png
-  sips -z $((sz*2)) $((sz*2)) "$ICON_PNG" --out /tmp/icon.iconset/icon_${sz}x${sz}@2x.png
-done
-iconutil -c icns /tmp/icon.iconset -o "$APP_DIR/Contents/Resources/icon.icns"
-rm -rf /tmp/icon.iconset
-
-touch "$APP_DIR"
-killall Finder
+pixi global install git git-lfs
+git --version
+git lfs version
 ```
 
-> **First launch:** macOS Gatekeeper may block the unsigned app — right-click the app on your Desktop and choose **Open** once, or run:
-> ```bash
-> xattr -cr "$HOME/Desktop/Marine Fish Detection GUI.app"
-> ```
-> 
-You'll see a new icon called **"Marine Fish Detection GUI"** on your Desktop.
+These tools are installed globally so Git is available before cloning the repository.
 
-### 3. Launch
+**2. Download the app, install the environment, and create the desktop app.**
 
-Double-click the **Marine Fish Detection GUI** icon on your Desktop.
+```bash
+(
+    set -e
+    INSTALL_DIR="$HOME/MarineApps"
+    mkdir -p "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
+    cd Marine-Fish-Detection-and-Classification-GUI
+    git lfs install --local
+    git lfs pull
+    pixi install --locked
+    bash setup/create_macos_shortcut.sh
+)
+```
 
-- **Windows:** launches immediately.
-- **Linux:** the first time, you may be asked if you trust the shortcut — click **"Trust and Launch"**. If double-clicking does nothing, right-click the icon and choose **"Allow Launching"**, then try again.
+The script creates **Marine Fish Detection GUI.app** on the Desktop, including its icon. If macOS blocks the unsigned launcher, right-click it and choose **Open**. The script does not disable Gatekeeper or remove quarantine attributes.
 
-That's it — every future launch is just this same double-click.
+**First Mac test:** start with `pixi run GUI` from the repository so errors remain visible in Terminal. Create a project, load a short video, run each model type you use (YOLO `.pt` and/or RF-DETR `.pth`), review detections, and open results and output files. Separately test YOLO training if needed, then close the app and test the desktop launcher. CPU detection can be slow.
 
-### Pinning it to the taskbar (optional)
+### Launch and pin the app
 
-- **Windows:** launch the app, then right-click its taskbar icon and choose **Pin to taskbar**.
-- **Linux (GNOME/Ubuntu):** open **Show Applications**, right-click **Marine Fish Detection GUI** and choose **Pin to Dash**. From a terminal instead:
-  ```bash
-  gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed "s/]$/, 'marine-fish-gui.desktop']/")"
-  ```
-- **macOS:** launch the app, then right-click its Dock icon and choose **Options → Keep in Dock**.
+Double-click **Marine Fish Detection GUI** on your Desktop. Keep the repository in its installation directory: the shortcut points to it. If you move it, rerun the corresponding shortcut script from the new location. You can also rerun just the shortcut script for an existing installation; there is no need to clone again.
+
+- **Windows:** find the app in Start, right-click, and choose **Pin to taskbar** (possibly under **More**).
+- **Linux (GNOME/Ubuntu):** open **Show Applications**, right-click **Marine Fish Detection GUI**, and choose **Pin to Dash** or **Add to Favorites**.
+- **macOS:** right-click the running app's Dock icon and choose **Options → Keep in Dock**.
 
 ## Using the Application
 
@@ -603,10 +562,12 @@ pixi run GUI
 ```
 Any startup errors will then be displayed in the terminal.
  
-**Linux only:** if double-clicking the Desktop shortcut does nothing but running `./launch_gui.sh` from a terminal works, this is a known Linux desktop-file quirk, not a bug in the app. Right-click the shortcut → **Allow Launching**, and make sure it's marked executable:
+**Linux only:** if the desktop shortcut does not launch, rerun its setup script from the repository, then right-click the icon and choose **Allow Launching**:
+
 ```bash
-chmod +x ~/Desktop/marine-fish-gui.desktop
+bash setup/create_linux_shortcut.sh
 ```
+
 
 ## Development
 

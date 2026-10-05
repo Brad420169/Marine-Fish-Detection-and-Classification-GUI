@@ -1,4 +1,5 @@
 """Explicit review decisions, inline annotation, and crop inspection."""
+from ui_icons import icon
 import json
 from uuid import uuid4
 from pathlib import Path
@@ -258,7 +259,8 @@ class ReviewPage(QWidget):
         self.back = self.button(nav,'Back to Results',self.leave)
         self.previous = self.button(nav,'Previous',lambda:self.navigate(-1))
         self.skip = self.button(nav,'Skip',lambda:self.navigate(1))
-        self.confirm = self.button(nav,'Confirm && Next  →',self.confirm_frame)
+        self.confirm = self.button(nav,'Confirm && Next',self.confirm_frame)
+        self.confirm.setIcon(icon('arrow_right'))
         self.confirm.setObjectName('confirmButton')
         QShortcut(QKeySequence('Alt+Right'),self,activated=lambda:self.navigate(1))
         QShortcut(QKeySequence('Alt+Left'),self,activated=lambda:self.navigate(-1))
@@ -414,9 +416,10 @@ class ReviewPage(QWidget):
         holder=QWidget();layout=QHBoxLayout(holder)
         layout.setContentsMargins(8,4,8,4);layout.setSpacing(7)
         group=QButtonGroup(holder);group.setExclusive(True)
-        for symbol,status,tip,colour in (('✓','confirmed','Confirm this species','#36b88e'),
-                                         ('✕','rejected','Not a fish — drop this detection','#dd6675')):
-            button=QPushButton(symbol);button.setCheckable(True)
+        for icon_name,status,tip,colour in (('check','confirmed','Confirm this species','#36b88e'),
+                                         ('close','rejected','Not a fish — drop this detection','#dd6675')):
+            button=QPushButton();button.setIcon(icon(icon_name));button.setCheckable(True)
+            button.setAccessibleName(tip)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(tip)
             button.setStyleSheet(self.DECISION_STYLE.format(colour=colour))
@@ -501,7 +504,9 @@ class ReviewPage(QWidget):
         species.activated.connect(lambda: self.select_annotation(self.annotation_row(species)))
         species.lineEdit().returnPressed.connect(lambda: self.commit_box(self.annotation_row(species)))
         self.annotations.setCellWidget(index,0,species)
-        remove=QPushButton('×')
+        remove=QPushButton()
+        remove.setIcon(icon('close'))
+        remove.setAccessibleName('Remove this pending annotation')
         remove.setToolTip('Remove this pending annotation')
         remove.setStyleSheet('padding: 0; min-width: 24px; min-height: 28px;')
         remove.clicked.connect(lambda: self.remove_box(remove))

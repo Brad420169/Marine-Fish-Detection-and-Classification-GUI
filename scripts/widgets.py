@@ -7,6 +7,8 @@ used for detection settings, and the project list row.
 """
 from __future__ import annotations
 
+from ui_icons import icon, icon_text
+
 import shutil
 from pathlib import Path
 
@@ -106,7 +108,7 @@ class VideoPathRow(PathRow):
 
     def set_path(self, path: str) -> None:
         super().set_path(path)
-        self.drop_label.setText(f"✓   {Path(path).name}")
+        self.drop_label.setText(icon_text("check", Path(path).name))
         self.drop_label.setStyleSheet(
             """
             QLabel {
@@ -138,7 +140,7 @@ class VideoPathRow(PathRow):
             }
             """
         )
-        self.drop_label.setText("🎬   Drop video file here")
+        self.drop_label.setText(icon_text("video", "Drop video file here"))
 
     def _set_hover_style(self) -> None:
         self.drop_label.setStyleSheet(
@@ -153,7 +155,7 @@ class VideoPathRow(PathRow):
             }
             """
         )
-        self.drop_label.setText("↓   Release to load video")
+        self.drop_label.setText(icon_text("arrow_down", "Release to load video"))
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
@@ -196,12 +198,18 @@ class WeightsRow(QWidget):
         row1.addWidget(lbl)
 
         self.combo = QComboBox()
+        self.combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.combo.setMinimumContentsLength(20)
         self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # Disable mouse wheel changing options
         self.combo.wheelEvent = lambda event: event.ignore()
         row1.addWidget(self.combo, 1)
 
-        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn = QPushButton()
+        self.refresh_btn.setIcon(icon("refresh"))
+        self.refresh_btn.setAccessibleName("Refresh model list")
         self.refresh_btn.setFixedWidth(36)
         self.refresh_btn.setToolTip("Refresh model list")
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -218,7 +226,8 @@ class WeightsRow(QWidget):
         spacer.setFixedWidth(100)
         row2.addWidget(spacer)
 
-        self.upload_btn = QPushButton("＋  Add model weights…")
+        self.upload_btn = QPushButton("Add model weights…")
+        self.upload_btn.setIcon(icon("plus"))
         self.upload_btn.setToolTip("Copy a .pt (YOLO) or .pth (RF-DETR) file into the models folder")
         self.upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upload_btn.clicked.connect(self._upload_weights)

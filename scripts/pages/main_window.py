@@ -7,6 +7,8 @@ page once a run completes.
 """
 from __future__ import annotations
 
+from ui_icons import icon
+
 from pathlib import Path
 
 from PyQt6.QtCore import QProcess, Qt
@@ -101,7 +103,7 @@ class MainWindow(QMainWindow):
         self.video_row = VideoPathRow()
         video_layout.addWidget(self.video_row)
         video_group.setMinimumHeight(220)
-        self.input_cards.addWidget(video_group,1)
+        self.input_cards.addWidget(video_group,2)
 
         # Model Input Box
         model_group = QGroupBox("2. Model Input")
@@ -122,35 +124,25 @@ class MainWindow(QMainWindow):
         settings_layout.setContentsMargins(12, 16, 12, 10)
 
         self.conf_slider = LabeledSlider(
-            "Detection confidence",
+            "Minimum detection confidence",
             default_val=25,
             tooltip=(
-                "Minimum confidence required for a detection to be accepted. "
-                "Lower values find more fish but may include more false positives; "
+                "This is the minimum confidence that the AI is required to have for a detection to be accepted. "
+                "Lower values will find more fish at the cost of more inaccurate detections, requiring more manual review. "
                 "higher values are more selective."
             ),
         )
-        self.iou_slider = LabeledSlider(
-            "Overlap sensitivity",
-            default_val=80,
-            tooltip=(
-                "Controls how overlapping detection boxes are handled (IoU threshold). "
-                "Higher values keep more overlapping boxes; lower values suppress "
-                "overlapping duplicate detections more aggressively."
-            ),
-        )
+
         self.review_conf_slider = LabeledSlider(
             "Flag for review below",
             default_val=50,
             tooltip=(
-                "Accepted detections below this confidence are added to the review CSV "
-                "so they can be checked manually. This does not change which detections "
-                "the model accepts."
+                "Accepted detections below this confidence are flagged for review, "
+                "so they can be checked manually. "
             ),
         )
 
         settings_layout.addWidget(self.conf_slider)
-        settings_layout.addWidget(self.iou_slider)
         settings_layout.addWidget(self.review_conf_slider)
         self.input_cards.addWidget(settings_group,1)
 
@@ -230,13 +222,15 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
 
-        self.run_btn = QPushButton("▶   Run Detection")
+        self.run_btn = QPushButton("Run Detection")
+        self.run_btn.setIcon(icon("play"))
         self.run_btn.setObjectName("runButton")
         self.run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.run_btn.clicked.connect(self._run)
         btn_row.addWidget(self.run_btn, 2)
 
-        self.cancel_btn = QPushButton("✕   Cancel")
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setIcon(icon("close"))
         self.cancel_btn.setObjectName("cancelButton")
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.setEnabled(False)
@@ -518,7 +512,7 @@ class MainWindow(QMainWindow):
             weights_path=Path(weights),
             output_dir=resolved_output,
             confidence=self.conf_slider.value(),
-            iou=self.iou_slider.value(),
+            iou=0.80,
             review_confidence=self.review_conf_slider.value(),
         )
 

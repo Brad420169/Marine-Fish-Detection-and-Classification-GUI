@@ -6,6 +6,8 @@ page stack, so opening a project switches page rather than swapping windows.
 """
 from __future__ import annotations
 
+from ui_icons import icon, icon_label, icon_text
+
 import csv
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -70,14 +72,14 @@ def _parse(stamp: str) -> datetime:
 
 
 class ActionCard(QFrame):
-    """One of the three call-to-action tiles across the top of the page."""
-    def __init__(self, symbol, title, subtitle, action, parent=None):
+    """One of the call-to-action tiles across the top of the page."""
+    def __init__(self, icon_name, title, subtitle, action, parent=None):
         super().__init__(parent)
         self.setObjectName('actionCard')
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.action = action
         row = QHBoxLayout(self); row.setContentsMargins(16,14,16,14); row.setSpacing(14)
-        badge = QLabel(symbol); badge.setObjectName('actionBadge')
+        badge = icon_label(icon_name, 22); badge.setObjectName('actionBadge')
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter); badge.setFixedSize(40,40)
         row.addWidget(badge)
         text = QVBoxLayout(); text.setSpacing(2)
@@ -85,7 +87,7 @@ class ActionCard(QFrame):
         caption = QLabel(subtitle); caption.setObjectName('muted'); caption.setWordWrap(True)
         text.addWidget(heading); text.addWidget(caption)
         row.addLayout(text,1)
-        arrow = QLabel('→'); arrow.setObjectName('cardArrow'); row.addWidget(arrow)
+        arrow = icon_label('arrow_right'); arrow.setObjectName('cardArrow'); row.addWidget(arrow)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
@@ -117,13 +119,13 @@ class ProjectCard(QFrame):
         name = QLabel(project.name); name.setObjectName('cardTitle')
         details.addWidget(name)
         runs = f"{stats['runs']} run" if stats['runs'] == 1 else f"{stats['runs']} runs"
-        for text, tip in ((f"🗓  {stats['modified']}", ''),
-                          (f"▤  {stats['detections']:,} detections   •   {runs}", ''),
-                          (f"🏷  {stats['model'] or 'No runs yet'}", ''),
-                          (f"📁  {short_path(project.output_root) if project.output_root else 'No output folder set'}",
+        for icon_name, text, tip in (("calendar", f"{stats['modified']}", ''),
+                          ("document", f"{stats['detections']:,} detections   •   {runs}", ''),
+                          ("tag", f"{stats['model'] or 'No runs yet'}", ''),
+                          ("folder", f"{short_path(project.output_root) if project.output_root else 'No output folder set'}",
                            project.output_root)):
             # Wrapping lets a card shrink with the window instead of being clipped.
-            line = QLabel(text); line.setObjectName('muted'); line.setWordWrap(True)
+            line = QLabel(icon_text(icon_name, text)); line.setObjectName('muted'); line.setWordWrap(True)
             if tip: line.setToolTip(tip)
             details.addWidget(line)
         row.addLayout(details,1)
@@ -133,7 +135,8 @@ class ProjectCard(QFrame):
         open_button = QPushButton('Open'); open_button.setObjectName('primaryButton')
         open_button.setFixedWidth(84); open_button.setCursor(Qt.CursorShape.PointingHandCursor)
         open_button.clicked.connect(lambda: on_open(project))
-        menu_button = QPushButton('⋮'); menu_button.setObjectName('menuButton')
+        menu_button = QPushButton(); menu_button.setIcon(icon('more'));
+        menu_button.setAccessibleName('More actions'); menu_button.setObjectName('menuButton')
         menu_button.setFixedWidth(32); menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
         menu_button.setToolTip('More actions')
         menu_button.clicked.connect(lambda: on_menu(project, menu_button))
@@ -194,21 +197,27 @@ class ProjectsPage(QWidget):
         subtitle = QLabel('Manage your projects, create new ones, and open existing projects.')
         subtitle.setObjectName('muted'); root.addWidget(subtitle)
 
-        actions = QHBoxLayout(); actions.setSpacing(14); root.addLayout(actions)
-        for symbol,heading,caption,handler in (
-                ('+','New Project','Create a new project to start analysing videos',self.create),
-                ('▤','Open Project','Open the project selected below',self.open_selected),
-                ('⌕','Browse Folder','Select a project directory manually',self.browse)):
-            actions.addWidget(ActionCard(symbol,heading,caption,handler),1)
+        body = QGridLayout()
+        body.setSpacing(14)
+        body.setColumnStretch(0, 1)
+        body.setRowStretch(1, 1)
+        root.addLayout(body, 1)
 
-        body = QHBoxLayout(); body.setSpacing(14); root.addLayout(body,1)
+        actions = QHBoxLayout()
+        actions.setSpacing(14)
+        for icon_name, heading, caption, handler in (
+                ('plus', 'New Project', 'Create a new project to start analysing videos', self.create),
+                ('document', 'Open Project', 'Open the project selected below', self.open_selected)):
+            actions.addWidget(ActionCard(icon_name, heading, caption, handler), 1)
+
+        body.addLayout(actions, 0, 0)
 
         recent = QGroupBox(); recent.setObjectName('recentBox')
         recent_layout = QVBoxLayout(recent); recent_layout.setContentsMargins(12,12,12,12); recent_layout.setSpacing(10)
         heading_row = QHBoxLayout()
-        heading = QLabel('🕑  Recent Projects'); heading.setObjectName('cardTitle')
+        heading = QLabel(icon_text('clock', 'Recent Projects')); heading.setObjectName('cardTitle')
         heading_row.addWidget(heading); heading_row.addStretch()
-        self.view_all = QPushButton('View All →'); self.view_all.setObjectName('linkButton')
+        self.view_all = QPushButton('View All'); self.view_all.setIcon(icon('arrow_right')); self.view_all.setObjectName('linkButton')
         self.view_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self.view_all.clicked.connect(self.toggle_view_all)
         heading_row.addWidget(self.view_all)
@@ -224,14 +233,14 @@ class ProjectsPage(QWidget):
         self.empty = QLabel('No projects yet. Use New Project to create one.')
         self.empty.setObjectName('muted'); self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         recent_layout.addWidget(self.empty)
-        body.addWidget(recent,1)
+        body.addWidget(recent,1, 0)
 
         # The rail is a fixed-width inspector so the project list keeps the slack.
         rail_holder = QWidget(); rail_holder.setMinimumWidth(320); rail_holder.setMaximumWidth(400)
         rail = QVBoxLayout(rail_holder); rail.setContentsMargins(0,0,0,0); rail.setSpacing(14)
-        body.addWidget(rail_holder)
-
-        self.search = QLineEdit(); self.search.setPlaceholderText('🔍   Search projects…')
+        body.addWidget(rail_holder, 0, 1, 2, 1)
+        self.search = QLineEdit(); self.search.setPlaceholderText('Search projects…')
+        self.search.addAction(icon('search'), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(self.refresh_list)
         rail.addWidget(self.search)
 
@@ -365,7 +374,8 @@ class ProjectsPage(QWidget):
 
     def toggle_view_all(self):
         self.show_all = not self.show_all
-        self.view_all.setText('Show Recent ←' if self.show_all else 'View All →')
+        self.view_all.setText('Show Recent' if self.show_all else 'View All')
+        self.view_all.setIcon(icon('arrow_left' if self.show_all else 'arrow_right'))
         self.refresh_list()
 
     def open_project(self, project):

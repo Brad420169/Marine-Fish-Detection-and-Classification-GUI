@@ -1,6 +1,7 @@
 """Shared ocean backdrop and application navigation chrome."""
+from ui_icons import icon
 from PyQt6.QtCore import Qt, QRectF, QSize
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from paths import ROOT_DIR
@@ -33,8 +34,8 @@ class OceanShell(OceanBackground):
         header = QWidget(); header.setObjectName('oceanHeader')
         row = QHBoxLayout(header); row.setContentsMargins(22,12,24,12)
         logo = QLabel()
-        icon = QPixmap(str(ROOT_DIR/'assets'/'icon.png'))
-        logo.setPixmap(icon.scaled(46,46,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        logo_pixmap = QPixmap(str(ROOT_DIR/'assets'/'icon.png'))
+        logo.setPixmap(logo_pixmap.scaled(46,46,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
         row.addWidget(logo)
         brand = QVBoxLayout(); brand.setSpacing(2)
         title = QLabel('Marine Fish Detector'); title.setObjectName('brandTitle')
@@ -49,14 +50,14 @@ class OceanShell(OceanBackground):
         sidebar = QWidget();sidebar.setObjectName('oceanSidebar');sidebar.setFixedWidth(220)
         nav = QVBoxLayout(sidebar);nav.setContentsMargins(8,16,8,18);nav.setSpacing(8)
         self.buttons = {}
-        for key, label in [('projects','▱   Projects'),('detection','▶   Run Detection'),
-                           ('review','Review Detections'),('results','▥   View Results'),
-                           ('train','Train a Model')]:
+        for key, label, icon_name in [('projects','Projects','folder'),
+                                      ('detection','Run Detection','play'),
+                                      ('review','Review Detections','search'),
+                                      ('results','View Results','chart'),
+                                      ('train','Train a Model','train')]:
             button = QPushButton(label);button.setObjectName('navButton');button.setCheckable(True)
-            if key in ('review', 'train'):
-                icon = 'search.svg' if key == 'review' else 'train.svg'
-                button.setIcon(QIcon(str(ROOT_DIR/'assets'/icon)))
-                button.setIconSize(QSize(18, 18))
+            button.setIcon(icon(icon_name))
+            button.setIconSize(QSize(18, 18))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, target=key:navigate(target))
             nav.addWidget(button);self.buttons[key]=button
