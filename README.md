@@ -45,86 +45,55 @@ Here's a full demo of the application in action:
 
 **Platforms:** Windows, Linux (Ubuntu 24.04), and Apple Silicon macOS (`osx-arm64`, pending real-Mac validation). Intel Macs are not included. Allow approximately **5 GB of free disk space**, plus space for videos and results.
 
-Each platform has a prerequisite block and an application setup block. The setup scripts create the desktop icon automatically; you do not need to paste shortcut code into your terminal.
+Choose your platform: [<img src="assets/platforms/windows.svg" width="22" alt=""> **Windows**](#windows) · [<img src="assets/platforms/linux.svg" width="22" alt=""> **Linux**](#linux-and-macos) · [<img src="assets/platforms/macos.svg" width="22" alt=""> **macOS**](#linux-and-macos)
 
-### Windows
+Install Pixi once, then download and run the installer for your platform. It installs Git and Git LFS, downloads the app into `~/MarineApps/Marine-Fish-Detection-and-Classification-GUI`, installs its dependencies, and creates the desktop icon. Existing installation folders are left untouched; choose a different directory if one already exists.
 
-**1. Install Pixi, then use it to install Git and Git LFS.** Open PowerShell:
+<a id="windows"></a>
+### <img src="assets/platforms/windows.svg" width="28" alt=""> Windows
+
+**1. Install Pixi.** Open PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
-Close and reopen PowerShell, then run:
+**2. Close and reopen PowerShell, then download and run the installer:**
 
 ```powershell
-pixi global install git git-lfs
-git --version
-git lfs version
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/installation.ps1' -OutFile installation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installation.ps1
 ```
 
-**2. Choose an installation directory, download the app, and create the icon.** Change `$InstallDir` if you prefer another location.
+For a different installation directory, use `powershell -NoProfile -ExecutionPolicy Bypass -File .\installation.ps1 -InstallDir 'D:\MarineApps'` instead of the last command. You can also download [installation.ps1](installation.ps1) manually and run it from the folder where you saved it.
 
-```powershell
-$InstallDir = Join-Path $HOME 'MarineApps'
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Set-Location $InstallDir
-git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-if ($LASTEXITCODE -ne 0) { throw 'Git clone failed.' }
-Set-Location Marine-Fish-Detection-and-Classification-GUI
-git lfs install --local
-if ($LASTEXITCODE -ne 0) { throw 'Git LFS setup failed.' }
-git lfs pull
-if ($LASTEXITCODE -ne 0) { throw 'Git LFS download failed.' }
-pixi install
-if ($LASTEXITCODE -ne 0) { throw 'Pixi installation failed.' }
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_shortcut.ps1
-```
+The installer creates shortcuts on your actual Desktop (including a redirected OneDrive Desktop) and in the Start menu. Execution-policy bypass applies only to that PowerShell process.
 
-The script creates shortcuts on your actual Desktop (including a redirected OneDrive Desktop) and in the Start menu. Execution-policy bypass applies only to that PowerShell process.
+<a id="linux-and-macos"></a>
+### <img src="assets/platforms/linux.svg" width="28" alt=""> Linux and <img src="assets/platforms/macos.svg" width="28" alt=""> macOS
 
-### Linux and macOS
-
-- **Linux:** Ubuntu 24.04 is the reference platform. If `curl` is missing, install it with `sudo apt update && sudo apt install -y curl` (or your distribution's package manager).
+- **Linux:** Ubuntu 24.04 on x86_64 is the reference platform. If `curl` is missing, install it with `sudo apt update && sudo apt install -y curl` (or your distribution's package manager).
 - **macOS:** use macOS 13 or newer on an Apple Silicon (M-series) Mac with a native ARM64 terminal, not Rosetta. Intel Macs are not configured. Real-Mac validation is still pending. Detection initially uses **CPU**; YOLO training selects **MPS** when available and needs separate testing.
 
-**1. Install Pixi, then use it to install Git and Git LFS.**
-Open Terminal:
+**1. Install Pixi.** Open Terminal:
 
 ```bash
 curl -fsSL https://pixi.sh/install.sh | bash
 ```
 
-Close and reopen Terminal, then run:
+**2. Close and reopen Terminal, then download and run the installer:**
 
 ```bash
-pixi global install git git-lfs
-git --version
-git lfs version
+curl -fsSL https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/installation.sh -o installation.sh && bash installation.sh
 ```
 
-These tools are installed globally so Git is available before cloning the repository.
-
-**2. Choose an installation directory, download the app, and create the icon.** Change `INSTALL_DIR` if you prefer another location. The commands automatically select the shortcut script for your operating system. The parentheses keep error handling within this setup block.
+If you download [installation.sh](installation.sh) manually, open Terminal in the folder where you saved it and run:
 
 ```bash
-(
-    set -e
-    INSTALL_DIR="$HOME/MarineApps"
-    mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
-    cd Marine-Fish-Detection-and-Classification-GUI
-    git lfs install --local
-    git lfs pull
-    pixi install --locked
-    case "$(uname -s)" in
-        Linux) bash setup/create_linux_shortcut.sh ;;
-        Darwin) bash setup/create_macos_shortcut.sh ;;
-        *) echo "Unsupported operating system" >&2; exit 1 ;;
-    esac
-)
+bash installation.sh
 ```
+
+For a different installation directory, run `INSTALL_DIR="$HOME/My Marine Apps" bash installation.sh`. The installer automatically selects the Linux or macOS shortcut script.
 
 `--locked` installs the versions recorded in `pixi.lock` without updating it. Pixi selects the dependencies for your operating system automatically.
 
