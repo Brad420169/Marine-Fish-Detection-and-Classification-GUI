@@ -31,6 +31,9 @@ from pages.results_page import ResultsPage
 from pages.review_page import ReviewPage
 from pages.training_page import TrainingPage
 from pages.project_page import ProjectsPage
+from pages.project_overview import ProjectOverview
+from pages.annotation_library import AnnotationLibrary
+from pages.dataset_export_page import DatasetExportPage
 
 
 class MainWindow(QMainWindow):
@@ -60,7 +63,22 @@ class MainWindow(QMainWindow):
 
         self.projects_page = ProjectsPage()
         self.projects_page.opened.connect(self.open_project)
+        self.projects_page.deleted.connect(self._project_deleted)
         self.pages.addWidget(self.projects_page)
+
+        self.overview_page = ProjectOverview()
+        self.overview_page.navigate.connect(self._navigate_shell)
+        self.overview_page.open_item.connect(self._open_item)
+        self.overview_page.remove_item.connect(self._remove_work)
+        self.pages.addWidget(self.overview_page)
+        self.annotation_library = AnnotationLibrary()
+        self.annotation_library.opened.connect(self._open_annotation)
+        self.annotation_library.run_opened.connect(self._annotate_run)
+        self.pages.addWidget(self.annotation_library)
+        self.export_page = DatasetExportPage()
+        self.export_page.exported.connect(self._use_dataset)
+        self.export_page.saved.connect(self._register_dataset)
+        self.pages.addWidget(self.export_page)
 
         # Detection page
 
@@ -86,7 +104,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(12)
         root.setContentsMargins(16, 16, 16, 16)
 
-        title = QLabel("Run Detection")
+        title = QLabel("Detect Fish")
         title.setObjectName("pageTitle")
         root.addWidget(title)
         subtitle = QLabel("Select your video and model, configure settings, and start detecting fish.")
@@ -248,22 +266,37 @@ class MainWindow(QMainWindow):
             on_train=self._open_training,
         )
         self.pages.addWidget(self.results_page)
+        self.empty_results = QWidget()
+        empty_layout = QVBoxLayout(self.empty_results)
+        empty_title = QLabel('Results'); empty_title.setObjectName('pageTitle')
+        empty_layout.addWidget(empty_title)
+        empty_layout.addWidget(QLabel('Choose a completed detection run from Overview, or start a new detection.'))
+        for label, target in [('Choose a run', 'overview'), ('Start detection', 'detection')]:
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, key=target: self._navigate_shell(key))
+            empty_layout.addWidget(button)
+        empty_layout.addStretch()
+        self.pages.addWidget(self.empty_results)
 
         # Review page (low-confidence detection review)
 
-        self.review_page = ReviewPage(on_back=self._show_results_page)
+        self.review_page = ReviewPage(on_back=self._annotation_back)
+        self.review_page.export_requested.connect(self._export_annotations)
+        self.review_page.library_requested.connect(lambda: self._navigate_shell("annotations"))
         self.review_page.results_refreshed.connect(self._reload_reviewed_results)
         self.pages.addWidget(self.review_page)
         self.training_page = TrainingPage()
+        self.training_page.model_ready.connect(self._use_model)
         self.pages.addWidget(self.training_page)
         self.shell = OceanShell(self.pages, project, self._navigate_shell)
         self.setCentralWidget(self.shell)
         self.pages.currentChanged.connect(self._sync_sidebar)
-        self.pages.setCurrentWidget(self.detection_page if project else self.projects_page)
+        if project: self.open_project(project)
+        else: self.pages.setCurrentWidget(self.projects_page)
         self._sync_sidebar()
 
     def closeEvent(self, event):
-        if self.training_page.export_worker and self.training_page.export_worker.isRunning():
+        if self.export_page.export_worker and self.export_page.export_worker.isRunning():
             QMessageBox.information(self, 'Export in progress', 'Wait for the dataset export to finish before closing.')
             event.ignore()
             return
@@ -271,42 +304,146 @@ class MainWindow(QMainWindow):
             if QMessageBox.question(self, 'Training in progress', 'Stop the current training or evaluation and close?') != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self.training_page.process.kill()
-            self.training_page.process.waitForFinished(3000)
+            self.training_page.stop_job()
+            if not self.training_page.process.waitForFinished(3000):
+                event.ignore(); return
+        if self.review_page.suggestion_worker:
+            QMessageBox.information(self, 'Suggestions running', 'Wait for model suggestions to finish before closing.')
+            event.ignore(); return
+        if self.pages.currentWidget() is self.review_page and not self.review_page.leave_to(self.close):
+            event.ignore(); return
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, 'Detection running', 'Cancel detection and wait for it to finish before closing.')
+            event.ignore(); return
         super().closeEvent(event)
 
     def _sync_sidebar(self, *_args):
         current = self.pages.currentWidget()
-        for key, page in [('projects',self.projects_page),('detection',self.detection_page),
-                          ('review',self.review_page),('results',self.results_page),
-                          ('train',self.training_page)]:
-            self.shell.buttons[key].setChecked(current is page)
-        # Everything past Projects needs a project open, and results need a finished run.
-        available = bool(self.project) and bool(self.results_page.outputs)
-        self.shell.buttons['detection'].setEnabled(bool(self.project))
-        self.shell.buttons['review'].setEnabled(available)
-        self.shell.buttons['results'].setEnabled(available)
-        self.shell.buttons['train'].setEnabled(available)
+        for key, page in [('projects', self.projects_page), ('overview', self.overview_page),
+                          ('detection', self.detection_page), ('review', self.review_page),
+                          ('results', self.results_page), ('train', self.training_page)]:
+            selected = current is page or (key == 'review' and current in (self.annotation_library, self.export_page)) or (key == 'results' and current is self.empty_results)
+            self.shell.buttons[key].setChecked(selected)
+            self.shell.buttons[key].setEnabled(key == 'projects' or bool(self.project))
 
     def _navigate_shell(self, target):
         if self.pages.currentWidget() is self.review_page:
-            if target == 'review':
-                return
+            if target == 'review': return
             if not self.review_page.leave_to(lambda: self._navigate_shell(target)):
-                self._sync_sidebar()
                 return
-        if target == 'projects':
-            self._back_to_projects()
-        elif target == 'detection' and self.project:
+        if target == 'projects': self._back_to_projects()
+        elif not self.project: return
+        elif target == 'overview':
+            self.overview_page.set_project(self.project)
+            self.pages.setCurrentWidget(self.overview_page)
+        elif target == 'detection':
+            self.weights_row.set_project_models(self.project.items)
+            self._refresh_runs_list()
             self.pages.setCurrentWidget(self.detection_page)
         elif target == 'results':
-            self.pages.setCurrentWidget(self.results_page)
-        elif target == 'review' and self.pages.currentWidget() is not self.review_page:
-            self._open_review(self.results_page.outputs,self.results_page.output_dir)
-        elif target == 'train' and self.results_page.output_dir:
-            self._open_training(self.results_page.output_dir)
+            self.pages.setCurrentWidget(self.results_page if self.results_page.outputs else self.empty_results)
+        elif target in ('review', 'annotations'):
+            self.annotation_library.set_project(self.project)
+            self.pages.setCurrentWidget(self.annotation_library)
+        elif target == 'train':
+            self.pages.setCurrentWidget(self.training_page)
         self._sync_sidebar()
 
+    def _remove_work(self, item):
+        if self._work_in_progress():
+            QMessageBox.information(self, 'Work in progress', 'Finish or stop active work before removing saved items.')
+            return
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle('Remove saved work')
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText(f"Remove {item['name']} from this project?")
+        dialog.setInformativeText('This removes the saved entry only. Its files remain on disk, including source videos, annotations, datasets and model weights.')
+        remove = dialog.addButton('Remove from project', QMessageBox.ButtonRole.DestructiveRole)
+        cancel = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel)
+        dialog.exec()
+        if dialog.clickedButton() is not remove: return
+        try:
+            self.project.remove_work(item)
+        except OSError as exc:
+            QMessageBox.warning(self, 'Could not remove work', str(exc)); return
+        # Reset selected work so a removed entry cannot be reopened through stale controls.
+        self.open_project(self.project)
+
+    def _open_item(self, item):
+        if item['kind'] in ('model', 'dataset') and self.training_page.process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, 'Training active', 'Finish or stop the current training job before loading another dataset or model.')
+            return
+        if not Path(item['path']).exists():
+            QMessageBox.warning(self, 'Source unavailable', f"Restore the source at {item['path']}."); return
+        if item['kind'] == 'run': self._open_run(item['record'])
+        elif item['kind'] == 'annotation': self._open_annotation(item['path'])
+        elif item['kind'] == 'dataset': self._use_dataset(item['path'])
+        elif item['kind'] == 'model':
+            self.training_page.dataset.setText(item.get('dataset', ''))
+            self.training_page.active_dataset = item.get('dataset', '')
+            self.training_page.best_weights = Path(item['path'])
+            self.training_page.evaluate.setEnabled(bool(item.get('dataset')))
+            self.training_page.set_inputs_enabled(True)
+            self.training_page.log.setPlainText(f"Saved model: {item['path']}")
+            self.pages.setCurrentWidget(self.training_page)
+
+    def _open_annotation(self, root):
+        try:
+            self.review_page.load_run(Path(root) / 'low_confidence_review.csv', root, None)
+            self.pages.setCurrentWidget(self.review_page)
+        except (OSError, ValueError, KeyError) as exc:
+            QMessageBox.warning(self, 'Cannot open annotations', str(exc))
+
+    def _annotate_run(self, record):
+        self._open_run(record)
+        if self.pages.currentWidget() is not self.review_page:
+            self._open_review(self.results_page.outputs, Path(record.output_dir))
+
+    def _annotation_back(self):
+        if self.review_page.manual_session: self._navigate_shell('overview')
+        else: self._show_results_page()
+
+    def _export_annotations(self):
+        if not self.review_page.leave_to(self._export_annotations): return
+        if self.export_page.export_worker:
+            self.pages.setCurrentWidget(self.export_page); return
+        self.export_page.set_source(self.review_page.root)
+        self.pages.setCurrentWidget(self.export_page)
+
+    def _register_dataset(self, filename):
+        try:
+            self.project.add_item('dataset', Path(filename).parent.name, filename)
+            self.training_page.refresh_datasets()
+        except OSError as exc:
+            QMessageBox.warning(self, 'Dataset saved', f'Dataset is saved at {filename}, but project registration failed: {exc}')
+
+    def _use_dataset(self, filename):
+        if self.training_page.process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, 'Training active', 'Finish or stop the current training job before changing its dataset.')
+            return
+        try:
+            self.project.add_item('dataset', Path(filename).parent.name, filename)
+        except OSError as exc:
+            QMessageBox.warning(self, 'Cannot register dataset', str(exc)); return
+        self.training_page.refresh_datasets()
+        self.training_page.dataset.setText(filename)
+        self.training_page._inspect_dataset()
+        self.pages.setCurrentWidget(self.training_page)
+
+    def _use_model(self, filename, target):
+        if target == 'detection':
+            self._navigate_shell(target)
+            index = next((i for i in range(self.weights_row.combo.count())
+                          if str(self.weights_row.combo.itemData(i)) == filename), -1)
+            if index < 0:
+                self.weights_row.combo.addItem(Path(filename).parent.parent.name + ' / best.pt', Path(filename))
+                index = self.weights_row.combo.count() - 1
+            self.weights_row.combo.setEnabled(True)
+            self.weights_row.combo.setCurrentIndex(index)
+        else:
+            self.review_page.assist_weights = filename
+            self._navigate_shell(target)
 
     # Navigation
 
@@ -360,29 +497,46 @@ class MainWindow(QMainWindow):
         self.outputs = {}
 
     def open_project(self, project: Project) -> None:
-        """Adopt a project chosen on the Projects page and move to detection setup."""
+        """Adopt a project chosen on the Projects page and show its overview."""
+        if self._work_in_progress():
+            QMessageBox.information(self, 'Work in progress', 'Wait for active detection, export, suggestions or training to finish before changing projects.')
+            return
         self.project = project
+        self.review_page.shutdown()
+        self.review_page.root = None
+        self.review_page.assist_weights = None
+        self.results_page.outputs = {}
+        self.results_page.output_dir = None
+        self.training_page.set_project(project)
+        self.weights_row.set_project_models(project.items)
+        self.overview_page.set_project(project)
+        self.annotation_library.set_project(project)
         self.setWindowTitle(f"Marine Fish Detector  —  {project.name}")
         self.shell.set_project(project)
         self.outputs = {}
         self._refresh_runs_list()
         self._show_detection_page()
+        self.pages.setCurrentWidget(self.overview_page)
         self._sync_sidebar()
 
+    def _work_in_progress(self):
+        return bool((self.worker and self.worker.isRunning()) or self.export_page.export_worker
+                    or self.review_page.worker or self.review_page.suggestion_worker
+                    or self.training_page.process.state() != QProcess.ProcessState.NotRunning)
+
+    def _project_deleted(self, project):
+        if self.project and self.project.name == project.name:
+            self.review_page.shutdown()
+            self.project = None
+            self.outputs = {}
+            self.shell.set_project(None)
+            self._sync_sidebar()
+
     def _back_to_projects(self) -> None:
-        if self.worker and self.worker.isRunning():
-            answer = QMessageBox.question(
-                self,
-                "Detection running",
-                "A detection is still running.\n\nCancel it and return to Projects?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-
-            self.worker.cancel()
-
-        # A run may have added detections since the list was last built.
+        if self._work_in_progress():
+            QMessageBox.information(self, 'Work in progress', 'Finish or stop active work before changing projects.')
+            return
+        self.review_page.shutdown()
         self.projects_page.refresh()
         self.pages.setCurrentWidget(self.projects_page)
 
@@ -448,7 +602,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.review_page)
 
     def _open_training(self, output_dir: Path) -> None:
-        self.training_page.set_run(output_dir)
+        if self.training_page.process.state() == QProcess.ProcessState.NotRunning:
+            self.training_page.set_run(output_dir)
         self.pages.setCurrentWidget(self.training_page)
 
     def _reload_reviewed_results(self) -> None:
@@ -509,6 +664,7 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(True)
         config = RunConfig(
             video_path=Path(video),
+            target_fps=self.video_row.target_fps(),
             weights_path=Path(weights),
             output_dir=resolved_output,
             confidence=self.conf_slider.value(),
@@ -623,16 +779,20 @@ class MainWindow(QMainWindow):
 
         self.worker = None
 
-        # Send the run information to the Results page.
-        self.results_page.set_results(
-            outputs=self.outputs,
-            project_name=self.project.name,
-            model_name=self._pending_model_name,
-            output_dir=self._pending_output_dir,
-        )
+        # Background completion must not replace a different run being annotated.
+        if self.pages.currentWidget() is self.detection_page:
+            self.results_page.set_results(
+                outputs=self.outputs,
+                project_name=self.project.name,
+                model_name=self._pending_model_name,
+                output_dir=self._pending_output_dir,
+            )
+            self._open_review(self.outputs, self._pending_output_dir)
+        else:
+            self.progress_bar.setFormat('Detection complete — open it from Overview or Past Runs')
+            if self.pages.currentWidget() is self.overview_page:
+                self.overview_page.set_project(self.project)
 
-        # The review workflow comes before viewing the refreshed results.
-        self._open_review(self.outputs, self._pending_output_dir)
 
     def _on_cancelled(self) -> None:
         self.run_btn.setEnabled(True)

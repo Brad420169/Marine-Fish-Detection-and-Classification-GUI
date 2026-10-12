@@ -51,10 +51,11 @@ class OceanShell(OceanBackground):
         nav = QVBoxLayout(sidebar);nav.setContentsMargins(8,16,8,18);nav.setSpacing(8)
         self.buttons = {}
         for key, label, icon_name in [('projects','Projects','folder'),
-                                      ('detection','Run Detection','play'),
-                                      ('review','Review Detections','search'),
-                                      ('results','View Results','chart'),
-                                      ('train','Train a Model','train')]:
+                                      ('overview','Overview','document'),
+                                      ('detection','Detect Fish','play'),
+                                      ('review','Annotate Data','search'),
+                                      ('train','Train a Model','train'),
+                                      ('results','Results','chart')]:
             button = QPushButton(label);button.setObjectName('navButton');button.setCheckable(True)
             button.setIcon(icon(icon_name))
             button.setIconSize(QSize(18, 18))

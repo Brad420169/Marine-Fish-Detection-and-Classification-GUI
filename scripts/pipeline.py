@@ -67,6 +67,7 @@ class RunConfig:
     review_confidence: float = 0.50
     iou:          float = 0.80
     device:       str | None = None
+    target_fps:   float | None = None
 
 
 # Utilities
@@ -340,7 +341,16 @@ def run_pipeline(
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
-    video_stem   = config.video_path.stem
+    source_name = config.video_path.name
+    if config.target_fps is not None:
+        from dataclasses import replace
+        from video_sampling import prepare_video
+        log(f'Preparing {config.target_fps:g} FPS working video…')
+        working = prepare_video(config.video_path, config.output_dir / 'working_video.mp4',
+                                config.target_fps, is_cancelled or (lambda: False))
+        config = replace(config, video_path=working)
+
+    video_stem   = Path(source_name).stem
     summary_csv  = config.output_dir / "track_summary.csv"
     flagged_csv  = config.output_dir / "low_confidence_review.csv"
     output_video = config.output_dir / f"{video_stem}_annotated.mp4"
@@ -542,7 +552,7 @@ def run_pipeline(
     log("Writing CSV outputs...")
     (config.output_dir / "original_detections.json").write_text(
         json.dumps({"fps": fps, "duration": video_duration, "total_frames": frame_index,
-                    "video": config.video_path.name,
+                    "video": source_name,
                     "source_video": str(config.video_path.resolve()),
                     "weights_path": str(config.weights_path.resolve()),
                     "class_names": names,
@@ -578,8 +588,8 @@ def run_pipeline(
             obs_span_seconds = 0.0
 
         rows.append({
-            "dataset":                  config.video_path.stem,
-            "video":                    config.video_path.name,
+            "dataset":                  Path(source_name).stem,
+            "video":                    source_name,
             "video_duration_seconds":   round(video_duration, 1),
             "species":                  species,
             "max_n":                    max_n,

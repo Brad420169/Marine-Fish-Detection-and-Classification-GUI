@@ -9,11 +9,11 @@ import tempfile
 import cv2
 
 from pipeline import SUMMARY_FIELDS, extract_maxn_example_frames, format_timestamp
-from review_io import save_rows, original_box, review_box
+from review_io import save_rows, original_box, review_box, box_identity
 
 
 def box_key(frame, box):
-    return (int(frame), *(round(float(value), 2) for value in box))
+    return (int(frame), *box_identity(box))
 
 
 def merge_detections(original, reviews):
@@ -26,6 +26,17 @@ def merge_detections(original, reviews):
             continue
         key = box_key(row['frame_number'], original_box(row))
         lookup[key].append(row)
+    # Older area removals could append a second row for a rounded CSV box.
+    # An explicit area rejection wins only when the original identity is unique;
+    # do not guess how to reconcile genuinely ambiguous detections.
+    originals = Counter(box_key(frame['frame_number'], det['bbox'])
+                        for frame in original['frames'] for det in frame['detections'])
+    for key, matches in lookup.items():
+        if len(matches) > 1 and originals[key] == 1:
+            exclusions = [row for row in matches if row.get('rejection_source') == 'area'
+                          and row.get('review_status') == 'rejected']
+            if exclusions:
+                lookup[key] = deque([exclusions[-1]])
     merged = []
     for frame in original['frames']:
         detections = []
@@ -169,8 +180,9 @@ def results_need_refresh(root):
     root = Path(root)
     confirmation = root / 'review_completion.json'
     reviewed = root / 'reviewed_detections.csv'
-    return confirmation.is_file() and (not reviewed.is_file() or
-            confirmation.stat().st_mtime_ns > reviewed.stat().st_mtime_ns)
+    sources = [path for path in (confirmation, root / 'low_confidence_review.csv') if path.is_file()]
+    return bool(sources) and (not reviewed.is_file() or
+            max(path.stat().st_mtime_ns for path in sources) > reviewed.stat().st_mtime_ns)
 
 
 from PyQt6.QtCore import QThread, pyqtSignal

@@ -104,11 +104,43 @@ class VideoPathRow(PathRow):
         self._set_idle_style()
 
         main_layout.addWidget(self.drop_label)
+        self.fps_choice = QComboBox()
+        self.fps_choice.setAccessibleName('Processing frame rate')
+        self.fps_choice.addItem('Select a video to detect FPS', None)
+        self.fps_choice.setEnabled(False)
+        main_layout.addWidget(self.fps_choice)
+        self.fps_warning = QLabel('Lower FPS removes frames from this run’s working video and output. '
+            'To return to the original FPS, start a new run or session by dropping or browsing the original video again. '
+            'Your original file is unchanged. Reduced-FPS working videos have no audio.')
+        self.fps_warning.setWordWrap(True)
+        self.fps_warning.setStyleSheet('color: #ffd28a;')
+        self.fps_warning.hide()
+        main_layout.addWidget(self.fps_warning)
+        self.fps_choice.currentIndexChanged.connect(
+            lambda: self.fps_warning.setVisible(self.target_fps() is not None))
         self.setLayout(main_layout)
+
+    def target_fps(self):
+        return self.fps_choice.currentData()
 
     def set_path(self, path: str) -> None:
         super().set_path(path)
-        self.drop_label.setText(icon_text("check", Path(path).name))
+        from video_sampling import video_fps
+        self.fps_choice.clear()
+        try:
+            fps = video_fps(path)
+            self.fps_choice.addItem(f'Original — {fps:g} FPS', None)
+            for rate in (30, 24, 15, 5):
+                if rate < fps:
+                    self.fps_choice.addItem(f'{rate} FPS', rate)
+            self.fps_choice.setEnabled(True)
+        except ValueError as exc:
+            self.fps_choice.addItem(str(exc), None)
+            self.fps_choice.setEnabled(False)
+        self._show_loaded_video()
+
+    def _show_loaded_video(self):
+        self.drop_label.setText(icon_text("check", Path(self.get_path()).name))
         self.drop_label.setStyleSheet(
             """
             QLabel {
@@ -157,23 +189,44 @@ class VideoPathRow(PathRow):
         )
         self.drop_label.setText(icon_text("arrow_down", "Release to load video"))
 
+    @staticmethod
+    def dropped_video(mime):
+        """Accept exactly one existing local video, never a URL or directory."""
+        urls = mime.urls() if mime.hasUrls() else []
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        path = Path(urls[0].toLocalFile())
+        if path.is_file() and path.suffix.lower() in ('.mp4', '.avi', '.mov', '.mkv'):
+            return str(path)
+        return None
+
     def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if urls and urls[0].toLocalFile().lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
-                self._set_hover_style()
-                event.acceptProposedAction()
-                return
-        event.ignore()
+        if self.dropped_video(event.mimeData()):
+            self._set_hover_style()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if self.dropped_video(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def dragLeaveEvent(self, event) -> None:
-        self._set_idle_style()
+        if self.get_path(): self._show_loaded_video()
+        else: self._set_idle_style()
+        event.accept()
 
     def dropEvent(self, event) -> None:
-        urls = event.mimeData().urls()
-        if urls:
-            self.set_path(urls[0].toLocalFile())
+        path = self.dropped_video(event.mimeData())
+        if path:
+            self.set_path(path)
             event.acceptProposedAction()
+        else:
+            if self.get_path(): self._show_loaded_video()
+            else: self._set_idle_style()
+            event.ignore()
 
 
 class WeightsRow(QWidget):
@@ -184,6 +237,7 @@ class WeightsRow(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.models_dir = ROOT_DIR / "models"
+        self.project_models = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -236,15 +290,18 @@ class WeightsRow(QWidget):
         layout.addLayout(row2)
         self.refresh()
 
+    def set_project_models(self, items):
+        self.project_models = [Path(item['path']) for item in items if item['kind'] == 'model']
+        self.refresh()
+
     def refresh(self) -> None:
-        current = self.combo.currentText()
+        current = self.combo.currentData()
         self.combo.clear()
 
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
-        models = sorted(
-            [*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth")]
-        )
+        models = sorted(set([*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth"),
+                             *(path for path in self.project_models if path.is_file())]))
         if not models:
             self.combo.addItem("No .pt/.pth files found in models/")
             self.combo.setEnabled(False)
@@ -252,10 +309,12 @@ class WeightsRow(QWidget):
 
         self.combo.setEnabled(True)
         for model in models:
-            self.combo.addItem(model.name, userData=model)
+            label = f'{model.parent.parent.name} / {model.name}' if model in self.project_models else model.name
+            self.combo.addItem(label, userData=model)
 
-        if current and self.combo.findText(current) >= 0:
-            self.combo.setCurrentText(current)
+        selected = next((i for i in range(self.combo.count()) if self.combo.itemData(i) == current), -1)
+        if current and selected >= 0:
+            self.combo.setCurrentIndex(selected)
         elif self.combo.findText(self.DEFAULT_MODEL) >= 0:
             self.combo.setCurrentText(self.DEFAULT_MODEL)
 
@@ -415,3 +474,20 @@ class ProjectListRow(QWidget):
 
     def set_selected(self, selected: bool) -> None:
         self.delete_btn.setVisible(selected)
+
+
+def settings_slider(self, layout, title, minimum, maximum, value, explanation):
+    row = QHBoxLayout()
+    label = QLabel(title); label.setMinimumWidth(115); row.addWidget(label)
+    slider = QSlider(Qt.Orientation.Horizontal); slider.setRange(minimum, maximum); slider.setValue(value)
+    slider.setToolTip(explanation); row.addWidget(slider, 1)
+    display = QLabel(); display.setMinimumWidth(70); row.addWidget(display)
+    help_button = QPushButton('?'); help_button.setFixedWidth(30); help_button.setStyleSheet('padding: 0;')
+    help_button.setAccessibleName(f'Explain {title}')
+    help_button.clicked.connect(lambda: self._explain(title, explanation)); row.addWidget(help_button)
+    slider.valueChanged.connect(lambda number: display.setText(
+        ('Auto' if number == 0 else str(number)) if title == 'Batch size' else
+        str(number * 32) if title == 'Image size' else f'{number}%' if title.endswith('%') else str(number)))
+    slider.valueChanged.emit(value)
+    layout.addLayout(row)
+    return slider, display

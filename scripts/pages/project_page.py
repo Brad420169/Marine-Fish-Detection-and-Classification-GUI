@@ -185,6 +185,7 @@ class NewProjectDialog(QDialog):
 class ProjectsPage(QWidget):
     """Landing page for choosing a project. Emits `opened` once one is chosen."""
     opened = pyqtSignal(object)
+    deleted = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -432,13 +433,14 @@ class ProjectsPage(QWidget):
         if QMessageBox.warning(
                 self,'Delete project',
                 f"Are you sure you want to delete '{project.name}'?\n\n"
-                'Deleted projects are not recoverable.\n\n'
-                'Detection output files will not be deleted.',
+                'The project and its generated data will be moved to your system trash.\n\n'
+                'Original videos and externally imported files outside the project folder are kept.',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         try:
             delete_project(project)
+            self.deleted.emit(project)
         except Exception as exc:
             QMessageBox.critical(self,'Delete failed',str(exc));return
         if self.selected is not None and self.selected.name == project.name:

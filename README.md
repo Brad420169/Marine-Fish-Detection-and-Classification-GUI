@@ -20,12 +20,6 @@ Below is an example of AI-annotated underwater imagery positioned next to the gr
 <img src="./assets/side_by_side_clip.gif" height="250"/>
 </p>
 
-Here's a full demo of the application in action:
-
-<p align="center">
-<video src="https://github.com/user-attachments/assets/6c2236fa-11d4-4f29-b0e2-a156b227ece0" height="250" controls></video>
-</p>
-
 ### Features
 
 - Automated fish detection and species classification
@@ -38,6 +32,42 @@ Here's a full demo of the application in action:
 - CSV result exports
 - Project-based organisation of detection runs
 - Support for additional compatible YOLO model weights (future support for additional AI models)
+
+---
+
+## App tutorial videos
+
+Choose the tutorial that matches your starting point. Each workflow begins by creating or opening a project.
+
+### User 1: Fish Detection
+
+> “I have marine imagery ready to be processed. How do I use this app to detect fish and review the results?”
+
+Follow the detection workflow: select your video and model, run detection, review the annotations, and explore the results.
+
+<video src="./assets/Detect.mp4" controls width="800"></video>
+
+[Watch the Fish Detection tutorial](./assets/Detect.mp4)
+
+### User 2: Generate Training Data
+
+> “I want to create AI training data for this reef. How do I annotate fish and export a dataset?”
+
+Start in **Annotate Data**: load a video, draw and label fish, then export reviewed frames as a YOLO training dataset.
+
+<video src="./assets/Annotate.mp4" controls width="800"></video>
+
+[Watch the Generate Training Data tutorial](./assets/Annotate.mp4)
+
+### User 3: Train an AI Model
+
+> “I already have annotated AI training data. How can I use it to train a fish detection model?”
+
+Start in **Train a Model**: load your YOLO dataset’s `data.yaml`, validate it, choose your training settings, and train a model to use in the app.
+
+<video src="./assets/Train_Model.mp4" controls width="800"></video>
+
+[Watch the Train an AI Model tutorial](./assets/Train_Model.mp4)
 
 ---
 
@@ -128,7 +158,17 @@ To continue an existing project, select it under **Recent Projects** and click *
 
 ### 2. Select a video and model
 
-Opening a project takes you to **Run Detection**:
+Opening a project takes you to **Overview**. Choose any starting point:
+
+| Starting point | Use it when | Next actions |
+|---|---|---|
+| **Detect Fish** | You have a video and an existing model. | Run detection, check predictions in Annotate Data, then view Results. |
+| **Annotate Data** | You want to label footage manually without running a model. | Open a video, save completed frames, export a YOLO dataset, then train. |
+| **Train a Model** | You already have a YOLO dataset. | Open `data.yaml`, validate it, train, evaluate, and reuse the model. |
+
+Overview also lists saved annotation sessions, detection runs, datasets, and trained models. Use the bin beside an item to remove its project entry after confirmation; its files remain on disk. These tools remain available throughout a project; completing a detection run is not a prerequisite for annotation or training. Finish or stop background jobs before switching projects.
+
+For the detection workflow, choose **Detect Fish**:
 
 ![Run Detection page with video input, model selector, detection settings, and past runs](./assets/screenshots/detection.png)
 
@@ -147,11 +187,17 @@ Use either the sliders or numeric fields. The defaults are **0.25** for detectio
 
 Click **Run Detection** at the bottom of the page; scroll down if needed. The progress and status panels show frames processed, processing device, speed, elapsed time, and estimated time remaining. **Cancel** stops the active run.
 
-When processing finishes, the app opens **Review Detections**. Review the predictions before returning to Results. To reopen an existing run without reprocessing its video, click its entry under **Past Runs** on the Run Detection page. A run with saved review edits awaiting a results refresh opens in review first.
+When processing finishes, the app opens **Annotate Data**. Review the predictions before returning to Results. To reopen an existing run without reprocessing its video, click its entry under **Past Runs** on the Run Detection page. A run with saved review edits awaiting a results refresh opens in review first.
 
-## Review Detections
+## Annotate Data
 
-The review page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
+For manual work, choose **Annotate Data** in the sidebar, browse for a video or drag one into the drop area, set a frame interval, and click **Start annotating**. This creates a saved annotation session without requiring model weights. Sessions reopen at the first unfinished sampled frame. **Tools → Sessions** returns to the session list; detection runs can also be opened there.
+
+**Tools → Frame interval** changes how far Previous, Skip, and Confirm & Next advance; playback still shows every video frame. Manual tracking switches navigation to one frame at a time so copied boxes can be checked. Saving an empty frame explicitly marks it as a background example; an unfinished frame is never exported.
+
+**Tools → Suggest boxes** adds drafts on the current unfinished frame, using CPU inference. **Tools → Choose model** selects the weights; **Assist annotation** after training selects the new model for you. Existing boxes and completed frames are preserved. Check suggested boxes and species before saving; accepted suggestions become human-confirmed annotations, without invented tracking IDs or confidence scores.
+
+The annotation page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
 
 ![Review Detections showing a fish frame, species editor, confirm and reject icons, and navigation controls](./assets/screenshots/review.png)
 
@@ -172,7 +218,7 @@ The **Review frames only** checkbox is temporarily hidden. **Left/Right arrow ke
 
 ### Add missed fish
 
-Drag a rectangle around a missed fish directly in the image. Use **Shift+drag** to draw over an existing box instead of moving it. Choose the species in the Annotations panel. **Track?** controls appear below the selected new box: click the **tick** to enable tracking, or leave the default **cross** for a single-frame box. No popup interrupts drawing. There is no Draw box button. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
+Drag a rectangle around a missed fish directly in the image. Use **Shift+drag** to draw over an existing box instead of moving it. Choose the species in the Annotations panel. **Track?** controls appear in the Annotations panel after **Enter** saves the class: click the **tick** to enable tracking, or leave the default **cross** for a single-frame box. No popup interrupts drawing. There is no Draw box button. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
 
 For small fish, use **Ctrl+scroll** to zoom, **scroll** to pan vertically, and **Shift+scroll** to pan sideways. Boxes are saved in the original frame coordinates regardless of zoom.
 
@@ -184,20 +230,26 @@ Click and drag inside an existing box to move it. Hold **Ctrl** and drag an edge
 
 Manual tracking copies a box forward one frame at a time:
 
-1. Draw a box, choose its species in the Annotations panel, and click the **tick** below the box to opt into tracking. The current frame stays open; there is no end-frame picker.
+1. Draw a box, choose its species in the Annotations panel, and press **Enter** to save it. Click the **Track?** tick in that panel to opt into tracking. The current frame stays open; there is no end-frame picker.
 2. Click **Confirm & Next** to save this frame and copy the box to the next frame.
-3. Drag the copied box onto the fish, then confirm again to continue. The latest position and species are copied.
+3. If the next frame already has a same-species annotation overlapping the tracked box (at least 50% intersection-over-union), that annotation carries the track instead of adding a duplicate. If a later frame has no match, manual copying resumes from the latest box. Adjust the box as needed, then confirm again to continue.
 4. When the fish disappears, select its box and press **Delete** to stop tracking from that frame onward. **Ctrl+Z** restores the deletion until you confirm or save another annotation.
 
 Playback, arrow keys, and Skip only navigate; they do not copy boxes. Copied boxes remain pending until confirmed, and the next frame is not marked reviewed. Confirming a frame again never duplicates or overwrites an existing next-frame box. Deleting a track also removes any later boxes already saved for that track; earlier frames stay intact. Existing range-based tracks remain readable, but no longer interpolate. Manual tracks have no model confidence or AI-generated track ID.
 
+### Remove detections from a fixed area
+
+Hold the **right mouse button and drag** a rectangle over an unwanted annotation. Model boxes whose centres fall inside that area are removed from the current and later frames of this video, regardless of predicted species. Earlier frames, manual annotations, and active tracks are preserved. Zoom and pan are supported.
+
+**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the review CSV and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or stops its track); repeated deletions no longer trigger automatic suppression.
+
 ### Return to refreshed results
 
-After confirming your edits, click **Back to Results** or navigate away using the sidebar. The app automatically rebuilds results when saved review decisions require it; wait for that refresh to finish. There is no separate **Refresh Results** button in the current GUI.
+Click **Back to Results** or navigate away using the sidebar to save your labelled annotations and edits automatically, even when only part of the video has been reviewed. Leaving does not confirm unfinished frames or advance tracks. Boxes without a species must be labelled or removed before leaving. For detection runs, the app refreshes saved results before opening the destination page, so charts and summaries include your changes. Manual sessions save and return to Overview without generating detection results. There is no separate **Refresh Results** button.
 
 The refresh rebuilds `track_summary.csv`, charts, and available Max-N examples from the original predictions plus saved decisions. It also writes `reviewed_detections.csv` and preserves the initial summary as `track_summary_original.csv`. Unreviewed predictions retain their original labels. Refreshing does not rerun tracking, and repeated refreshes start from `original_detections.json` rather than accumulating changes.
 
-Older runs without original detection data must be reprocessed before their summaries can be refreshed accurately. Missing source images can prevent individual Max-N examples from being regenerated. The annotated-video button opens the existing output video; the current GUI does not expose a reviewed-video regeneration action.
+Older runs without original detection data must be reprocessed before their summaries can be refreshed accurately. Missing source images can prevent individual Max-N examples from being regenerated. **Back to Results** asks “Regenerate video with updated annotations?”. Choose **Yes** to rebuild the video from the clean working source, preserving this run’s FPS, along with refreshing the CSV and plots. **No** updates the CSV and plots only; **Cancel** stays in the editor. The old video is replaced only after regeneration succeeds, and its first version is retained in `.original_video`.
 
 ## Results
 
@@ -212,8 +264,8 @@ Use **View Results** in the sidebar or **Back to Results** after review. The pag
 | **Open Annotated Video** | The generated video with detection boxes, species labels, and confidence scores. |
 | **Open Summary CSV** | `track_summary.csv`, with species-level Max-N, timing, visible duration, track counts, detection counts, and mean confidence. |
 | **Open Output Folder** | The run directory containing its generated files. |
-| **Start Review** | The review page for this run. |
-| **Train a Model** | Dataset export and YOLO training from confirmed review frames. |
+| **Open Annotations** | The review page for this run. |
+| **Train a Model** | YOLO training from a project dataset or an external `data.yaml`. |
 
 The run directory also contains `low_confidence_review.csv` for flagged detections and saved review decisions. Output buttons are disabled when the corresponding file is unavailable.
 
@@ -227,18 +279,21 @@ The example frames show available Max-N observations with the relevant fish high
 
 ## Train a Model
 
-Open **Train a Model** from Results or the sidebar after loading a run.
+Dataset export is available from **Annotate Data → Tools → Export dataset**. Choose training and validation percentages, a new destination folder, and **Generate AI Training Data**. The remaining percentage is held out for testing. Only completed frames are exported, including explicitly confirmed empty frames. Each session currently contains one source video; its frames are split in time order. At least three completed frames and a labelled fish are required. Existing dataset directories are never overwritten.
 
-![Train a Fish Detector page showing dataset split controls, export destination, and YOLO training settings](./assets/screenshots/training.png)
+Exported datasets appear in Overview and in the training page's project dataset selector. Click **Use in Train a Model** to continue immediately.
 
-1. Fully review and confirm the frames you want to use. Inspect all predictions and add missed fish before confirming; empty confirmed frames become background examples.
-2. Under **Export reviewed frames**, choose training and validation percentages. The remaining percentage is held out for testing. Frames are split in time order to reduce overlap between sets.
-3. Choose a destination and click **Generate AI Training Data**.
-4. Under **Train with Ultralytics YOLO**, select the generated `data.yaml` and a starting YOLO `.pt` model. RF-DETR `.pth` weights cannot be trained with this trainer.
-5. Set epochs, batch size, patience, image size, and run name, then click **Start Training**. Scroll down to follow the log or use **Stop Training** if needed.
-6. After training succeeds, use **Evaluate Test Set** for the held-out test frames. This is separate from inspecting predictions in Review Detections.
+To start directly with an existing dataset:
 
-Training saves new weights, including `best.pt`, under the dataset's `runs` folder. Add the resulting weights through **Add model weights…** on Run Detection to use them for another video.
+1. Open **Train a Model** from Overview or the sidebar.
+2. Choose a project dataset or click **Open YOLO dataset…** and select `data.yaml`.
+3. Validate the dataset. The page shows its classes and train/validation/test image counts, and checks local paths and detection labels. YAML download commands and duplicate images across splits are rejected. A missing test split is allowed for training but cannot be evaluated.
+4. Choose starting YOLO `.pt` weights, epochs, batch size, patience, image size, and run name. RF-DETR `.pth` weights cannot be trained with this trainer.
+5. Click **Start Training** and follow the learning dashboard and log. **Stop Training** stops the process. Dataset and model inputs are locked while training or evaluation is active.
+6. Use **Evaluate Test Set** after successful training to evaluate the held-out images.
+7. Use **Use for detection** or **Assist annotation** to reuse the trained weights. Completed models are saved in the project Overview and can be reopened later.
+
+Training saves weights, including `best.pt`, under the dataset's `runs` folder. Original datasets, model weights, and existing annotations remain intact.
 
 ## Updating
 
@@ -450,3 +505,17 @@ The model weights included in this repository were trained by the author of this
 The application source code is licensed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
 The included model weights were trained using the Kona, Hawaii Dataset described above. The underlying training dataset is provided by ReefOSHawaii under the **Creative Commons Attribution 4.0 International (CC BY 4.0) License**.
+
+### Video frame rate
+
+After browsing or dropping a video in **Detect Fish** or **Annotate Data**, the app reads its FPS. Keep **Original** or choose **30, 24, 15 or 5 FPS**; only lower rates are offered. A separate working video is sampled at that rate while maintaining normal playback speed. Detection output, annotation frame numbers and timestamps use the selected rate. The original file is never overwritten. Reduced-FPS working videos contain no audio.
+
+Frames removed from a run cannot be recovered by increasing its FPS. Start a new run or annotation session and drop or browse the original video again to return to its original frame rate. Annotation’s frame interval remains a separate choice for how far the editor advances.
+
+### Trash a project
+
+Deleting a project from **Projects** moves its metadata and project-owned output folders to the system trash: Recycle Bin on Windows, Trash on macOS, or the desktop trash on Linux. Original videos and externally imported datasets/models outside those folders are preserved. A failed trash operation reports an error and never falls back to permanent deletion. If some folders were already moved before an error, they remain recoverable in the trash.
+
+### Stopping training
+
+**Stop Training** ends the current process, then automatically removes that job’s incomplete output folder (including checkpoints and plots) and temporary dataset configuration files. Failed jobs and stopping during app close use the same cleanup. Completed runs, original images, labels, dataset YAML, and source model weights are preserved. Successfully completed jobs keep their outputs and remove temporary files. Cleanup errors are shown in the training log with the affected path.

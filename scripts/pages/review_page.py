@@ -12,14 +12,15 @@ from PyQt6.QtCore import QEvent, QRect, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QImage, QPixmap, QShortcut, QKeySequence, QCursor
 from PyQt6.QtWidgets import (
     QGroupBox, QApplication, QSizePolicy, QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QCompleter, QDialog, QHBoxLayout, QLabel,
-    QInputDialog, QLineEdit, QMessageBox, QPushButton, QRubberBand, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
+    QFileDialog, QInputDialog, QLineEdit, QMessageBox, QPushButton, QMenu, QRubberBand, QScrollArea, QTabWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from review_summary import RefreshWorker, results_need_refresh
 from review_tracks import create_track, stop_track, advance_tracks
+from review_rejections import exclude_detection_area
 from model_evaluation import confirm_review_frame
 from pipeline import format_timestamp
-from review_io import (context_for, draw_review,
+from review_io import (ReviewVideoWorker, context_for, draw_review,
                        load_review_rows, load_species_names, save_rows, original_box, review_box)
 
 
@@ -68,6 +69,8 @@ class ImageLabel(QLabel):
         self.origin = None
         self.on_click = None
         self.on_draw = None
+        self.on_exclude = None
+        self.excluding = False
         self.on_zoom = None
         self.on_interact = None
         self.on_resize_start = None
@@ -168,7 +171,7 @@ class ImageLabel(QLabel):
                                    max(1,pix.width()-5),max(1,pix.height()-5)))
 
     def mousePressEvent(self, event):
-        if event.button() != Qt.MouseButton.LeftButton or not self.ready():
+        if event.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton) or not self.ready():
             return
         if self.on_interact: self.on_interact()
         point = event.position().toPoint()
@@ -176,6 +179,11 @@ class ImageLabel(QLabel):
         if not (0 <= ax <= 1 and 0 <= ay <= 1):
             return
         self.origin = point
+        self.excluding = event.button() == Qt.MouseButton.RightButton
+        if self.excluding:
+            self.dragging_box = False
+            self.band.setGeometry(QRect(point, point)); self.band.show()
+            return
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.dragging_box = bool(self.on_resize_start and self.on_resize_start(*self.fraction(point)))
             if not self.dragging_box:
@@ -197,7 +205,8 @@ class ImageLabel(QLabel):
             self.band.setGeometry(QRect(self.origin, event.position().toPoint()).normalized())
 
     def mouseReleaseEvent(self, event):
-        if self.origin is None or event.button() != Qt.MouseButton.LeftButton:
+        expected = Qt.MouseButton.RightButton if self.excluding else Qt.MouseButton.LeftButton
+        if self.origin is None or event.button() != expected:
             return
         start, end = self.origin, event.position().toPoint()
         self.origin = None; self.band.hide()
@@ -206,6 +215,12 @@ class ImageLabel(QLabel):
         if self.dragging_box:
             if self.on_drag_end: self.on_drag_end()
             self.dragging_box = False
+            return
+        if self.excluding:
+            self.excluding = False
+            if abs(end.x()-start.x()) >= self.DRAG and abs(end.y()-start.y()) >= self.DRAG and self.on_exclude:
+                (x1,y1), (x2,y2) = self.fraction(start), self.fraction(end)
+                self.on_exclude(min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2))
             return
         if abs(end.x()-start.x()) < self.DRAG and abs(end.y()-start.y()) < self.DRAG:
             if self.on_click: self.on_click(*self.fraction(end))
@@ -223,9 +238,15 @@ def pixmap(frame):
 
 class ReviewPage(QWidget):
     results_refreshed = pyqtSignal()
+    export_requested = pyqtSignal()
+    library_requested = pyqtSignal()
     def __init__(self,on_back,parent=None):
         super().__init__(parent)
         self.on_back = on_back
+        self.manual_session = False
+        self.frame_interval = 1
+        self.assist_weights = None
+        self.suggestion_worker = None
         self.path = None; self.root = None; self.video = None; self.cap = None
         self.rows = []; self.fields = []; self.names = []; self.pending = []; self.decisions = []
         self.flagged_frames = []; self.detections_by_frame = {}
@@ -250,7 +271,7 @@ class ReviewPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16,12,16,12)
         root.setSpacing(10)
-        title = QLabel('Review Detections'); title.setObjectName('pageTitle')
+        title = QLabel('Annotate Data'); title.setObjectName('pageTitle')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(title)
         hint = QLabel('Drag empty space to draw; drag boxes to move. Shift-drag draws over boxes. Ctrl+C copies the selected box; Ctrl+V pastes at the mouse. Delete removes. Arrows navigate.')
@@ -271,20 +292,38 @@ class ReviewPage(QWidget):
         self.play_button = self.button(mode, 'Play', self.toggle_playback)
         self.play_button.setIcon(icon('play'))
         mode.addStretch()
+        tools = QPushButton('Tools')
+        tools.setAccessibleName('Annotation tools')
+        menu = QMenu(tools)
+        menu.addAction('Sessions', self.library_requested.emit)
+        menu.addAction('Frame interval', self.select_interval)
+        menu.addAction('Choose model', self.choose_assist_model)
+        self.assist_button = menu.addAction('Suggest boxes', self.suggest_boxes)
+        menu.addSeparator()
+        menu.addAction('Export dataset', self.export_requested.emit)
+        tools.setMenu(menu)
+        mode.addWidget(tools)
         images = QHBoxLayout()
         panel = QGroupBox("Annotations"); panel.setFixedWidth(210)
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(10,18,10,10)
-        panel_title = QLabel('Annotations'); panel_title.setStyleSheet('font-weight: bold;')
-        panel_title.hide()
-        panel_hint = QLabel('<ul style="-qt-list-indent:0; margin-left:8px; margin-top:0px;">'
-                            '<li>Annotate missed fish detection</li>'
-                            '<li>Select species</li>'
-                            '<li>Enter to save the annotation; Enter again to confirm the frame</li>'
-                            '<li>Ctrl+C copies a selected box; Ctrl+V pastes centered at the mouse on the image</li>'
-                            '<li>Enter saves pasted boxes; Ctrl+Z undoes unsaved boxes or restores deletions</li>'
-                            '</ul>')
-        panel_hint.setTextFormat(Qt.TextFormat.RichText)
-        panel_hint.setWordWrap(True); panel_layout.addWidget(panel_hint)
+        for number, title, detail in (
+            ('1', 'Draw a box', 'Drag around a missed fish.'),
+            ('2', 'Choose a species', 'Select the matching label.'),
+            ('3', 'Save & confirm', 'Enter saves the box. Press again to confirm the frame.'),
+        ):
+            step = QHBoxLayout()
+            step.setSpacing(8)
+            badge = QLabel(number)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setFixedSize(24, 24)
+            badge.setStyleSheet('background: #12465b; color: #45d8f6; border-radius: 12px; font-weight: bold;')
+            step.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+            text = QLabel(f'<b>{title}</b>')
+            text.setToolTip(detail)
+            text.setWordWrap(True)
+            step.addWidget(text, 1)
+            panel_layout.addLayout(step)
+        panel_layout.addSpacing(4)
         self.annotations = QTableWidget(0,2)
         self.annotations.setHorizontalHeaderLabels(['Species',''])
         self.annotations.setColumnWidth(0,115)
@@ -302,18 +341,21 @@ class ReviewPage(QWidget):
         self.image.on_interact = self.pause_playback
         self.image.on_click = self.select_box
         self.image.on_draw = self.draw_box
+        self.image.on_exclude = self.exclude_area
         self.image.on_zoom = self.update_controls
         self.image.on_resize_start = self.begin_box_resize
         self.image.on_drag_start = self.begin_box_drag
         self.image.on_drag_move = self.move_box_drag
         self.image.on_drag_end = self.end_box_drag
-        self.track_prompt = QWidget(self.image)
+        self.track_annotation_id = None
+        self.track_prompt = QWidget(panel)
+        panel_layout.addWidget(self.track_prompt)
         self.track_prompt.setStyleSheet('background: #073047; color: white; border-radius: 4px;')
         track_layout = QHBoxLayout(self.track_prompt)
         track_layout.setContentsMargins(5,2,5,2)
         track_layout.addWidget(QLabel('Track?'))
-        self.track_yes = self.button(track_layout, '', lambda: self.set_pending_tracking(True))
-        self.track_no = self.button(track_layout, '', lambda: self.set_pending_tracking(False))
+        self.track_yes = self.button(track_layout, '', lambda: self.set_saved_tracking(True))
+        self.track_no = self.button(track_layout, '', lambda: self.set_saved_tracking(False))
         for button, name, asset in ((self.track_yes,'Track annotation','check'),
                                     (self.track_no,'Do not track','close')):
             button.setIcon(icon(asset)); button.setAccessibleName(name)
@@ -321,7 +363,6 @@ class ReviewPage(QWidget):
             button.setFixedSize(30,28)
             button.setStyleSheet('QPushButton { padding: 0; } QPushButton:checked { border: 2px solid #46d8ff; }')
         self.track_prompt.hide()
-        self.image.on_view_changed = self.position_track_prompt
         self.crop = QLabel('Select a fish to preview')
         self.crop.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.crop.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
@@ -330,8 +371,11 @@ class ReviewPage(QWidget):
         preview = QGroupBox('Zoom / Preview'); preview.setFixedWidth(210)
         preview_layout = QVBoxLayout(preview)
         preview_layout.addWidget(self.crop,1)
-        preview_hint = QLabel('Ctrl + scroll to zoom\nScroll to pan • Shift for sideways')
-        preview_hint.setObjectName('muted'); preview_hint.setWordWrap(True)
+        preview_hint = QLabel(
+            '<span style="color: #45d8f6;"><b>Ctrl + scroll</b></span> &nbsp; Zoom<br>'
+            '<span style="color: #45d8f6;"><b>Scroll</b></span> &nbsp; Pan vertically<br>'
+            '<span style="color: #45d8f6;"><b>Shift + scroll</b></span> &nbsp; Pan sideways')
+        preview_hint.setWordWrap(True)
         preview_layout.addWidget(preview_hint)
         images.addWidget(self.image,1); images.addWidget(preview)
         root.addLayout(images,1)
@@ -349,18 +393,42 @@ class ReviewPage(QWidget):
         detections_layout.addWidget(self.table)
         tips_panel = QGroupBox('Annotation tips')
         tips_layout = QVBoxLayout(tips_panel)
-        tips = QLabel(
-            '<b>Annotate:</b> Drag empty space to draw; Shift-drag draws over a box. Choose a species.<br>'
-            '<b>Move / resize:</b> Drag a box to move; Ctrl+drag an edge or corner to resize.<br>'
-            '<b>Track:</b> Click the tick below a new box to copy it forward on confirmation. Default: off.<br>'
-            '<b>Copy / paste:</b> Ctrl+C copies the selected box; Ctrl+V pastes it centered at the mouse. Enter saves pasted boxes.<br>'
-            '<b>Delete:</b> Select a box and press Delete to remove it and stop its track. Ctrl+Z restores it before the next save.<br>'
-            '<b>Confirm:</b> Confirm &amp; Next saves this frame and advances.<br>'
-            '<b>Navigate:</b> Click the image, then use Left/Right arrows without confirming.')
-        tips.setTextFormat(Qt.TextFormat.RichText)
-        tips.setWordWrap(True)
-        tips.setMinimumWidth(300)
-        tips_layout.addWidget(tips)
+        tips_tabs = QTabWidget()
+        tips_tabs.setStyleSheet(
+            'QTabWidget::pane { border: 0; }'
+            'QTabBar::tab { padding: 5px 10px; color: #b1d2e7; background: #082c40; }'
+            'QTabBar::tab:selected { color: #45d8f6; background: #12465b; }')
+        for title, rows in (
+            ('Draw && track', (
+                ('Draw', 'Drag empty space; <b>Shift + drag</b> draws over an existing box.'),
+                ('Label', 'Choose a species, then press <b>Enter</b> to save the box.'),
+                ('Track', 'After Enter saves a box, optionally enable Track in the Annotations panel. Off by default; you can continue without choosing.'),
+            )),
+            ('Edit boxes', (
+                ('Move / resize', 'Drag a box to move it. <b>Ctrl + drag</b> an edge or corner to resize.'),
+                ('Copy / paste', '<b>Ctrl + C</b> copies the selected box. <b>Ctrl + V</b> pastes at the mouse; <b>Enter</b> saves.'),
+                ('Exclude area', '<b>Right-drag</b> an area to remove model boxes centred there from this frame onward. <b>Ctrl + Z</b> undoes it.'),
+                ('Delete / undo', '<b>Delete</b> removes the box and stops its track. <b>Ctrl + Z</b> undoes unsaved boxes or restores deletions before saving.'),
+            )),
+            ('Navigate', (
+                ('Confirm', '<b>Confirm &amp; Next</b> saves the frame and advances. After saving a box with <b>Enter</b>, press it again to confirm the frame.'),
+                ('Browse', 'Click the image, then use <b>Left / Right</b> arrows to browse without confirming.'),
+            )),
+        ):
+            page = QWidget()
+            tip_rows = QVBoxLayout(page)
+            tip_rows.setContentsMargins(4, 8, 4, 4)
+            tip_rows.setSpacing(7)
+            for heading, detail in rows:
+                row = QLabel(
+                    f'<span style="color: #45d8f6;"><b>{heading}</b></span>'
+                    f' &nbsp; {detail}')
+                row.setWordWrap(True)
+                row.setMinimumWidth(300)
+                tip_rows.addWidget(row)
+            tip_rows.addStretch()
+            tips_tabs.addTab(page, title)
+        tips_layout.addWidget(tips_tabs)
         review_panels = QHBoxLayout()
         review_panels.addWidget(detections_panel, 3)
         review_panels.addWidget(tips_panel, 2)
@@ -489,34 +557,90 @@ class ReviewPage(QWidget):
     def end_box_drag(self):
         self.drag_box = None
 
-    def set_pending_tracking(self, enabled):
-        index = self.selected-self.table.rowCount()
-        if 0 <= index < len(self.pending):
-            self.annotations.cellWidget(index,0).setProperty('tracking', enabled)
-            self.image.setFocus()
+    def set_saved_tracking(self, enabled):
+        """Tracking is optional and applies only to the just-saved annotation."""
+        if self.worker:
+            return
+        source = next((row for row in self.current()
+                       if row.get('annotation_id') == self.track_annotation_id
+                       and row.get('review_status') != 'rejected'), None)
+        if source is None:
+            self.track_prompt.hide()
+            return
+        try:
+            rows = self.rows
+            if enabled and not source.get('manual_track_id'):
+                rows, _ = create_track(rows, self.track_annotation_id)
+            elif not enabled and source.get('manual_track_id'):
+                rows = [dict(row, manual_track_id='', track_keyframe='')
+                        if row is source else row for row in rows]
+            save_rows(self.path, rows, self.fields)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Tracking not saved', str(exc))
             self.position_track_prompt()
+            return
+        self.rows = rows
+        self.refresh_flagged()
+        self.deletion_undo.clear()
+        self.position_track_prompt()
+        self.image.setFocus()
 
     def position_track_prompt(self):
-        index = self.selected-self.table.rowCount()
-        if self.loading or not self.image.ready() or not (0 <= index < len(self.pending)):
+        source = next((row for row in self.current()
+                       if row.get('annotation_id') == self.track_annotation_id
+                       and row.get('review_status') != 'rejected'), None)
+        if self.loading or source is None:
             self.track_prompt.hide()
             return
-        editor = self.annotations.cellWidget(index,0)
-        enabled = bool(editor.property('tracking'))
-        self.track_yes.setChecked(enabled); self.track_no.setChecked(not enabled)
+        enabled = bool(source.get('manual_track_id'))
+        self.track_yes.setChecked(enabled)
+        self.track_no.setChecked(not enabled)
         self.track_yes.setEnabled(bool(self.cap) and self.frame_number < self.total_frames)
-        x1,y1,x2,y2 = self.pending[index]
-        x0,y0,vw,vh = self.image.region
-        if x2 < x0 or x1 > x0+vw or y2 < y0 or y1 > y0+vh:
-            self.track_prompt.hide()
+        self.track_prompt.setToolTip(f'Track {source["species"]} into the next frame. Optional; off by default.')
+        self.track_prompt.show()
+
+    def exclude_area(self, x1, y1, x2, y2):
+        self.pause_playback()
+        if self.worker or self.raw is None:
             return
-        pix = self.image.pixmap()
-        left = (self.image.width()-pix.width())/2+(x1-x0)*pix.width()/vw
-        bottom = (self.image.height()-pix.height())/2+(y2-y0)*pix.height()/vh+4
-        self.track_prompt.adjustSize()
-        self.track_prompt.move(round(max(0,min(left,self.image.width()-self.track_prompt.width()))),
-                               round(max(0,min(bottom,self.image.height()-self.track_prompt.height()))))
-        self.track_prompt.show(); self.track_prompt.raise_()
+        h, w = self.raw.shape[:2]
+        area = [max(0, min(w, x1*w)), max(0, min(h, y1*h)),
+                max(0, min(w, x2*w)), max(0, min(h, y2*h))]
+        if area[2]-area[0] < 2 or area[3]-area[1] < 2:
+            return
+        try:
+            rows, count = exclude_detection_area(
+                self.rows, area, self.frame_number, self.detections_by_frame, self.fields)
+            if not count:
+                self.status.setText('No model detections in this area. Manual boxes and tracks are preserved.')
+                return
+            save_rows(self.path, rows, self.fields)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Area not excluded', str(exc));return
+        changed_ids = {id(old) for old, new in zip(self.rows, rows) if old != new}
+        states = [(i, self.decisions[i], self.box_edits.get(i), self.table.isRowHidden(i))
+                  for i, row in enumerate(self.current())
+                  if id(row) in changed_ids]
+        self.deletion_undo.append(dict(
+            frame=self.frame_number, area_states=states, table_count=self.table.rowCount(),
+            added=[dict(row) for row in rows[len(self.rows):]],
+            changes=[(i, dict(before), dict(after)) for i, (before, after) in enumerate(zip(self.rows, rows))
+                     if before != after]))
+        self.rows = rows
+        self.refresh_flagged()
+        for index, row in enumerate(self.current()):
+            if index >= self.table.rowCount():
+                self.decisions.append('rejected')
+                self.add_table_row(index, row)
+            if row.get('rejection_source') == 'area':
+                self.decisions[index] = 'rejected'
+                self.box_edits.pop(index, None)
+                self.style_decision(index)
+                self.table.setRowHidden(index, True)
+        self.selected = -1
+        self.image.setFocus()
+        self.status.setText(f'Removed {count} model detections in this area from this frame onward. Ctrl+Z undoes this area removal.')
+        self.update_controls(); self.render()
 
     def delete_selected_box(self):
         """Persist only this deletion, without confirming the frame or other edits."""
@@ -534,7 +658,7 @@ class ReviewPage(QWidget):
         old = self.current()[index]
         if old.get('review_status') == 'rejected':
             return
-        deleted = dict(old, review_status='rejected', reviewed='yes')
+        deleted = dict(old, review_status='rejected', reviewed='yes', rejection_source='user')
         rows = [deleted if r is old else r for r in self.rows]
         try:
             if old.get('manual_track_id'):
@@ -544,6 +668,7 @@ class ReviewPage(QWidget):
             QMessageBox.critical(self,'Box not deleted',str(exc));return
         self.deletion_undo.append(dict(
             frame=self.frame_number, index=index,
+            added=[dict(row) for row in rows[len(self.rows):]],
             changes=[(i,dict(before),dict(after)) for i,(before,after) in enumerate(zip(self.rows,rows))
                      if before != after],
             species=self.table.cellWidget(index,2).currentText(),
@@ -570,6 +695,15 @@ class ReviewPage(QWidget):
             self.cap.release(); self.cap = None
         self.path = Path(flagged_csv) if flagged_csv else None
         self.root = Path(output_dir) if output_dir else None
+        metadata = self.root / 'original_detections.json' if self.root else None
+        source = json.loads(metadata.read_text(encoding='utf-8')) if metadata and metadata.is_file() else {}
+        self.manual_session = source.get('kind') == 'annotation'
+        preferences = self.root / 'annotation_view.json' if self.root else None
+        view = json.loads(preferences.read_text()) if preferences and preferences.is_file() else {}
+        self.frame_interval = max(1, int(view.get('frame_interval', source.get('frame_interval', 1))))
+        self.back.setText('Back to Overview' if self.manual_session else 'Back to Results')
+        self.table.setHorizontalHeaderLabels(['Saved species' if self.manual_session else 'Original AI prediction', 'Confidence', 'Reviewed species', 'Decision'])
+        self.table.setColumnHidden(1, self.manual_session)
         self.video = Path(video_path) if video_path else None
         self.rows=[]; self.fields=[]; self.pending=[]
         self.detections_by_frame={}; self.total_frames=0; self.fps=25.0
@@ -598,6 +732,14 @@ class ReviewPage(QWidget):
             self.frame_number = 1
         elif self.rows_by_frame and not self.flagged_frames:
             self.frame_number = min(self.rows_by_frame)
+        if self.manual_session and self.cap:
+            from yolo_export import reviewed_frames
+            completed = set(reviewed_frames(self.root)[2])
+            pending_track_frames = {r['frame_number'] for r in self.rows
+                                    if r.get('manual_track_id') and r['review_status'] == 'pending'}
+            sampled = range(1, self.total_frames + 1, self.frame_interval)
+            next_sample = next((n for n in sampled if n not in completed), self.total_frames)
+            self.frame_number = min(pending_track_frames | {next_sample})
         self.show_frame()
 
     def open_source(self):
@@ -660,7 +802,7 @@ class ReviewPage(QWidget):
             return earlier[-1] if earlier else self.frame_number
         if not self.total_frames:
             return self.frame_number
-        return max(1,min(self.total_frames,self.frame_number+step))
+        return max(1,min(self.total_frames,self.frame_number+step * self.frame_interval))
 
     def load_frame_image(self):
         # Sequential reads during playback avoid repeatedly seeking the decoder.
@@ -678,6 +820,8 @@ class ReviewPage(QWidget):
         return None
 
     def show_frame(self):
+        self.track_annotation_id = None
+        self.track_prompt.hide()
         self.box_edits = {}
         self.drag_box = None
         self.loading=True
@@ -708,7 +852,6 @@ class ReviewPage(QWidget):
         self.table.setCellWidget(index,3,self.decision_widget(index))
         species.activated.connect(lambda _, i=index: self.select_row(i,2))
         species.currentTextChanged.connect(self.render)
-        species.lineEdit().returnPressed.connect(self.confirm_frame)
         self.style_decision(index)
 
     # The app-wide sheet gives every QPushButton a 30px minimum and wide padding, which
@@ -772,11 +915,19 @@ class ReviewPage(QWidget):
 
     def update_controls(self):
         complete = self.review_complete_count
+        summary = f'{complete} of {len(self.flagged_frames)} flagged frames reviewed'
+        if self.manual_session and self.root:
+            from yolo_export import reviewed_frames
+            try:
+                complete = len(reviewed_frames(self.root)[2])
+                summary = f'{complete} frames complete • interval {self.frame_interval}'
+            except (OSError, ValueError, KeyError):
+                summary = 'Completion unavailable'
         flagged=' • flagged' if self.frame_number in self.flagged_frames else ''
         zoom=f' • {self.image.zoom:.1f}× zoom' if self.image.zoom>1 else ''
         self.progress.setText(
             f'<a href="jump" style="color: #46d8ff;">Frame {self.frame_number} / {self.total_frames}</a> • {self.timestamp()}{flagged}{zoom}'
-            f' • {complete} of {len(self.flagged_frames)} flagged frames reviewed')
+            f' • {summary}')
         self.previous.setEnabled(not self.worker and self.next_frame_number(-1)!=self.frame_number)
         self.skip.setEnabled(not self.worker and self.next_frame_number(1)!=self.frame_number)
         self.confirm.setEnabled(not self.worker and self.raw is not None)
@@ -860,6 +1011,8 @@ class ReviewPage(QWidget):
 
     def add_pending_box(self, box, text='', index=None, tracking=False):
         """Insert a drawn or restored draft without opening the tracking prompt."""
+        self.track_annotation_id = None
+        self.track_prompt.hide()
         if index is None: index = len(self.pending)
         index = min(index,len(self.pending))
         self.loading = True
@@ -870,7 +1023,6 @@ class ReviewPage(QWidget):
         species.currentTextChanged.connect(self.render)
         # Rows shift as boxes are committed or removed, so look the row up by widget.
         species.activated.connect(lambda: self.select_annotation(self.annotation_row(species)))
-        species.lineEdit().returnPressed.connect(lambda: self.commit_box(self.annotation_row(species)))
         self.annotations.setCellWidget(index,0,species)
         remove=QPushButton()
         remove.setIcon(icon('close'))
@@ -921,6 +1073,11 @@ class ReviewPage(QWidget):
         if 'changes' in entry:
             # Restore just rows touched by this deletion, never unrelated edits.
             rows = list(self.rows)
+            added = entry.get('added', [])
+            if added:
+                if rows[-len(added):] != added:
+                    QMessageBox.warning(self, 'Cannot undo deletion', 'Suppressed annotations have changed since deletion.');return
+                rows = rows[:-len(added)]
             for index,before,after in entry['changes']:
                 if index >= len(rows) or rows[index] != after:
                     QMessageBox.warning(self,'Cannot undo deletion','This annotation has changed since deletion.');return
@@ -934,7 +1091,18 @@ class ReviewPage(QWidget):
         if changing_frame:
             self.frame_number = entry['frame']
             self.show_frame()
-        if 'pending' in entry:
+        if 'area_states' in entry:
+            while self.table.rowCount() > entry['table_count']:
+                self.table.removeRow(self.table.rowCount()-1)
+                self.decisions.pop()
+            for index, decision, box_edit, hidden in entry['area_states']:
+                self.decisions[index] = decision
+                if box_edit is not None:
+                    self.box_edits[index] = list(box_edit)
+                self.table.setCellWidget(index, 3, self.decision_widget(index))
+                self.style_decision(index)
+                self.table.setRowHidden(index, hidden)
+        elif 'pending' in entry:
             self.add_pending_box(entry['pending'],entry['species'],entry['index'],entry.get('tracking',False))
         else:
             index = entry['index']
@@ -1010,7 +1178,9 @@ class ReviewPage(QWidget):
                             'Confirm the frame, then open Results to update the summary and charts.')
         if track:
             self.status.setText('Tracking enabled. Confirm & Next copies this box to the next frame. Delete the box to stop tracking.')
+        self.track_annotation_id = new['annotation_id']
         self.update_controls();self.render()
+        self.image.setFocus()
 
     def all_rows(self):
         """Saved detections on this frame, then boxes drawn but not yet confirmed."""
@@ -1018,6 +1188,7 @@ class ReviewPage(QWidget):
 
     def render(self,*args):
         if self.loading:return
+        self.position_track_prompt()
         if self.raw is None:
             self.track_prompt.hide()
             self.image.clear_frame()
@@ -1152,6 +1323,26 @@ class ReviewPage(QWidget):
             else:
                 self.undo_annotation()
             return True
+        # Qt can deliver keys to the editable combo or its line edit. Own Enter
+        # here for both, before saving destroys the pending editor and moves focus.
+        if (event.type() == QEvent.Type.KeyPress and self.isVisible()
+                and isinstance(obj, QWidget) and obj.window() == self.window()
+                and (obj is self or self.isAncestorOf(obj))
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            focus = QApplication.focusWidget()
+            for index in range(len(self.pending)):
+                editor = self.annotations.cellWidget(index, 0)
+                if obj in (editor, editor.lineEdit()) or focus in (editor, editor.lineEdit()):
+                    if not event.isAutoRepeat():
+                        self.commit_box(index)
+                    return True
+            for index in range(self.table.rowCount()):
+                editor = self.table.cellWidget(index, 2)
+                if obj in (editor, editor.lineEdit()) or focus in (editor, editor.lineEdit()):
+                    # Accept the edited name as a frame draft, without confirming.
+                    self.image.setFocus()
+                    return True
         # Plain arrows are review navigation, including when a table field has focus.
         # Separate dialogs and open dropdown popups keep their normal keyboard controls.
         if (event.type() == QEvent.Type.KeyPress and self.isVisible()
@@ -1168,9 +1359,89 @@ class ReviewPage(QWidget):
                 and not isinstance(QApplication.focusWidget(), QLineEdit)
                 and event.modifiers() == Qt.KeyboardModifier.NoModifier
                 and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
-            self.confirm_frame()
+            if not event.isAutoRepeat():
+                self.confirm_frame()
             return True
         return super().eventFilter(obj, event)
+
+    def select_interval(self):
+        self.pause_playback()
+        value, accepted = QInputDialog.getInt(self, 'Frame interval',
+            'Advance this many frames after saving or skipping (tracking still copies to the next video frame):',
+            self.frame_interval, 1, max(1, self.total_frames))
+        if accepted and self.save_interval(value):
+            self.update_controls()
+
+    def save_interval(self, value):
+        try:
+            target = self.root / 'annotation_view.json'
+            temporary = target.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'frame_interval': value}), encoding='utf-8')
+            temporary.replace(target)
+        except OSError as exc:
+            QMessageBox.warning(self, 'Cannot save interval', str(exc)); return False
+        self.frame_interval = value
+        return True
+
+    def choose_assist_model(self):
+        self.pause_playback()
+        weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth)')
+        if weights:
+            self.assist_weights = weights
+            self.assist_button.setToolTip(f'Suggest boxes on this frame using {Path(weights).name}. Saved boxes are preserved.')
+
+    def suggest_boxes(self):
+        self.pause_playback()
+        if self.raw is None or self.worker or self.suggestion_worker:
+            return
+        # Suggestions never replace existing boxes or reopen completed frames.
+        from yolo_export import reviewed_frames
+        try:
+            if self.frame_number in reviewed_frames(self.root)[2]:
+                QMessageBox.information(self, 'Frame complete', 'Suggestions are available on unfinished frames. Existing human annotations are preserved.')
+                return
+        except (OSError, ValueError, KeyError) as exc:
+            QMessageBox.warning(self, 'Cannot check annotations', str(exc)); return
+        weights = self.assist_weights
+        if not weights:
+            weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth)')
+        if not weights: return
+        self.assist_weights = weights
+        from annotation_assist import SuggestionWorker
+        self.suggestion_worker = SuggestionWorker(self.raw, weights, self)
+        self.setEnabled(False)
+        self.status.setText('Suggesting boxes for this frame on CPU…')
+        self.suggestion_worker.succeeded.connect(self.apply_suggestions)
+        self.suggestion_worker.failed.connect(lambda error: self.status.setText(f'Suggestions failed: {error}'))
+        self.suggestion_worker.finished.connect(self.suggestions_finished)
+        self.suggestion_worker.start()
+
+    def apply_suggestions(self, result):
+        existing = [review_box(row) for row in self.current()] + list(self.pending)
+        existing.extend(det['bbox'] for det in self.frame_context())
+        count = 0
+        for box, species in zip(result.xyxy, result.species):
+            if len(box) != 4 or not all(math.isfinite(float(v)) for v in box): continue
+            height, width = self.raw.shape[:2]
+            box = [max(0, min(width, box[0])), max(0, min(height, box[1])),
+                   max(0, min(width, box[2])), max(0, min(height, box[3]))]
+            if box[2] <= box[0] or box[3] <= box[1]: continue
+            # Avoid suggesting over a box the user has already supplied.
+            def overlaps(other):
+                x1, y1 = max(box[0], other[0]), max(box[1], other[1])
+                x2, y2 = min(box[2], other[2]), min(box[3], other[3])
+                intersection = max(0, x2-x1) * max(0, y2-y1)
+                union = (box[2]-box[0])*(box[3]-box[1]) + (other[2]-other[0])*(other[3]-other[1]) - intersection
+                return union > 0 and intersection / union > 0.3
+            if any(overlaps(other) for other in existing): continue
+            self.add_pending_box(box, species)
+            existing.append(box); count += 1
+        self.status.setText(f'{count} suggested boxes added as drafts. Check species and boxes before Confirm & Next.')
+
+    def suggestions_finished(self):
+        self.suggestion_worker.deleteLater()
+        self.suggestion_worker = None
+        self.setEnabled(True)
 
     def jump_to_frame(self, _link=None):
         self.pause_playback()
@@ -1193,21 +1464,69 @@ class ReviewPage(QWidget):
         self.frame_number=self.next_frame_number(1);self.show_frame()
 
     def leave(self):
-        if self.leave_to(self.on_back): self.on_back()
+        if self.worker or self.suggestion_worker: return
+        callback = self.on_back
+        if not self.manual_session:
+            answer = QMessageBox.question(
+                self, 'Update annotated video', 'Regenerate video with updated annotations?\n\n'
+                'Yes updates the video, CSV and plots. No updates only the CSV and plots.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes)
+            if answer == QMessageBox.StandardButton.Cancel: return
+            if answer == QMessageBox.StandardButton.Yes:
+                callback = self.regenerate_video
+        if self.leave_to(callback): callback()
+
+    def regenerate_video(self):
+        if not self.video:
+            QMessageBox.warning(self, 'Cannot regenerate video', 'No annotated output video is associated with this run.')
+            return
+        self.after_refresh = self.on_back
+        self.worker = ReviewVideoWorker(self.video, self.root, list(self.rows), self)
+        for button in (self.back, self.previous, self.skip, self.confirm):
+            button.setEnabled(False)
+        self.table.setEnabled(False)
+        self.annotations.setEnabled(False)
+        self.status.setText('Regenerating video with updated annotations…')
+        self.worker.progress.connect(lambda percent: self.status.setText(f'Regenerating video… {percent}%'))
+        self.worker.succeeded.connect(lambda _: self.status.setText('Video, CSV and plots updated.'))
+        self.worker.failed.connect(self.video_failed)
+        self.worker.finished.connect(self.refresh_finished)
+        self.worker.start()
+
+    def video_failed(self, error):
+        self.after_refresh = None
+        QMessageBox.critical(self, 'Cannot regenerate video',
+            f'{error}\n\nYour annotations, CSV and plots are saved. The previous video has not been replaced.')
 
     def leave_to(self, callback):
         self.pause_playback()
-        if self.worker or not self.discard_ok():
+        if self.worker or self.suggestion_worker or not self.save_frame(complete=False):
             return False
-        if self.root and results_need_refresh(self.root):
+        if self.root and not self.manual_session and results_need_refresh(self.root):
             self.refresh_results(callback)
             return False
         return True
 
     def confirm_frame(self):
+        self.save_frame(complete=True)
+
+    def save_frame(self, complete):
+        """Save annotations independently of frame completion or navigation."""
         self.pause_playback()
-        if self.worker or self.raw is None:return
+        if self.worker:return False
+        if self.raw is None:return True
         drafts=self.drafts();pending=self.pending_rows()
+        if not complete:
+            drafts = [draft if (draft['species'] != old['species']
+                      or index in self.box_edits or draft['review_status'] == 'rejected'
+                      or old.get('review_status') != 'pending') else dict(old)
+                      for index, (old, draft) in enumerate(zip(self.current(), drafts))]
+            if not pending and drafts == self.current():
+                return True
+        if complete and (any(row.get('manual_track_id') for row in self.current()) or
+                any(self.annotations.cellWidget(i, 0).property('tracking') for i in range(len(self.pending)))):
+            if self.frame_interval != 1 and not self.save_interval(1): return
         if not drafts and not pending:
             if self.record_frame_completion():
                 self.deletion_undo.clear()
@@ -1221,7 +1540,9 @@ class ReviewPage(QWidget):
                          | {r['species'] for r in pending if r['species'] not in self.names})
         if unknown and QMessageBox.question(self,'Unknown species','These names are not in the available species list. Save them anyway?\n\n'+'\n'.join(unknown)) != QMessageBox.StandardButton.Yes:
             return
-        for row in drafts:row['reviewed']='yes'
+        for row in drafts:
+            if complete or row['review_status'] != 'pending':
+                row['reviewed']='yes'
         additions=[]
         if pending:
             try:
@@ -1246,8 +1567,10 @@ class ReviewPage(QWidget):
                  and not new.get('manual_track_id')}
         rows=[updates.get(id(r),r) for r in self.rows if id(r) not in deleted]+additions
         try:
-            rows = advance_tracks(rows, self.frame_number,
-                                  self.total_frames if self.cap else self.frame_number)
+            if complete:
+                rows = advance_tracks(rows, self.frame_number,
+                                      self.total_frames if self.cap else self.frame_number,
+                                      self.detections_by_frame.get(self.frame_number+1, []))
         except ValueError as exc:
             QMessageBox.warning(self,'Track not saved',str(exc));return
         try:save_rows(self.path,rows,self.fields)
@@ -1259,6 +1582,9 @@ class ReviewPage(QWidget):
         self.deletion_undo.clear()
         self.names=sorted(set(self.names)|{r['species'] for r in pending})
         self.refresh_flagged()
+        if not complete:
+            self.show_frame()
+            return True
         if not self.record_frame_completion():
             self.show_frame()
             return
@@ -1268,7 +1594,7 @@ class ReviewPage(QWidget):
             temporary=target.with_name(target.stem+'.tmp.jpg')
             if not cv2.imwrite(str(temporary),draw_review(self.raw,self.current(),context=self.frame_context())):raise OSError('Could not write reviewed image.')
             temporary.replace(target)
-            self.status.setText('Frame confirmed. Results will update when you leave Review Detections.')
+            self.status.setText('Frame complete. Ready for dataset export.' if self.manual_session else 'Frame confirmed. Results will update when you leave Annotate Data.')
         except OSError as exc:self.status.setText(f'CSV saved; reviewed image failed: {exc}. You can confirm again to retry.')
         self.advance()
 
@@ -1322,13 +1648,15 @@ class ReviewPage(QWidget):
         QMessageBox.critical(self,'Cannot refresh results',error)
 
     def refresh_finished(self):
-        worker=self.worker;self.worker=None;worker.deleteLater();self.back.setEnabled(True);self.table.setEnabled(True);self.show_frame()
+        worker=self.worker;self.worker=None;worker.deleteLater();self.back.setEnabled(True);self.table.setEnabled(True);self.annotations.setEnabled(True);self.show_frame()
         callback, self.after_refresh = self.after_refresh, None
         if callback: callback()
 
     def shutdown(self):
         self.pause_playback()
         self._layout_timer.stop()
+        if self.suggestion_worker:
+            self.suggestion_worker.wait()
         if self.worker:
             self.worker.requestInterruption()
             self.worker.wait()

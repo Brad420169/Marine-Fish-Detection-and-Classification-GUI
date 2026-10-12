@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
-REVIEW_COLUMNS = ['original_species', 'review_status', 'annotation_source', 'annotation_id', 'original_bbox', 'manual_track_id', 'track_keyframe']
+REVIEW_COLUMNS = ['original_species', 'review_status', 'annotation_source', 'annotation_id', 'original_bbox', 'manual_track_id', 'track_keyframe', 'rejection_source']
 
 
 def review_box(row):
@@ -18,6 +18,33 @@ def review_box(row):
     if not all(map(math.isfinite, box)) or box[0] < 0 or box[1] < 0 or box[2] <= box[0] or box[3] <= box[1]:
         raise ValueError('Invalid review bounding box.')
     return box
+
+
+def box_identity(box):
+    """Review CSV coordinates are stored to two decimal places."""
+    return tuple(round(float(value), 2) for value in box)
+
+
+def box_iou(first, second):
+    """Intersection over union for validated image-coordinate boxes."""
+    left, top = max(first[0], second[0]), max(first[1], second[1])
+    right, bottom = min(first[2], second[2]), min(first[3], second[3])
+    intersection = max(0, right-left) * max(0, bottom-top)
+    union = ((first[2]-first[0]) * (first[3]-first[1])
+             + (second[2]-second[0]) * (second[3]-second[1]) - intersection)
+    return intersection / union if union > 0 else 0
+
+
+def model_review_row(detection, frame_number, fields):
+    """Promote an immutable model prediction without losing its merge identity."""
+    row = dict.fromkeys(fields, '')
+    row.update(frame_number=frame_number, species=detection['species'],
+               original_species=detection['species'], confidence=detection.get('confidence', ''),
+               track_id=detection.get('track_id') if detection.get('track_id') is not None else '',
+               annotation_source='model', review_status='pending', reviewed='')
+    row.update(zip(('x1', 'y1', 'x2', 'y2'), detection['bbox']))
+    review_box(row)
+    return row
 
 
 def original_box(row):
@@ -127,51 +154,57 @@ class ReviewVideoWorker(QThread):
         self.video, self.root, self.rows = Path(video), Path(root), rows
 
     def run(self):
-        backup = original_video_backup(self.video)
-        source = backup if backup.exists() else self.video
-        cap = cv2.VideoCapture(str(source))
+        # Always redraw from the clean source, never from already painted boxes.
+        # Use the same merge as CSVs/charts, including area removals and partial reviews.
+        from review_summary import merge_detections
+        from pipeline import add_frame_label, format_timestamp
+        cap = None
         writer = None
         target = self.video
         temporary = target.with_name(target.stem + '.tmp.mp4')
         try:
+            original = json.loads((self.root / 'original_detections.json').read_text(encoding='utf-8'))
+            source = Path(original['source_video'])
+            if source.resolve() == target.resolve():
+                raise ValueError('The annotated output must be separate from the original video.')
+            frames = {frame['frame_number']: frame['detections']
+                      for frame in merge_detections(original, self.rows)}
+            cap = cv2.VideoCapture(str(source))
             if not cap.isOpened():
-                raise RuntimeError('Cannot open the annotated video.')
+                raise RuntimeError('The original working video is unavailable. Restore it to regenerate annotations.')
             fps = cap.get(cv2.CAP_PROP_FPS)
             total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             size = (int(cap.get(3)), int(cap.get(4)))
             if fps <= 0 or total <= 0:
                 raise RuntimeError('Invalid video properties.')
+            if total != int(original.get('total_frames', total)) or abs(fps-float(original['fps'])) > .01:
+                raise ValueError('The source video timing no longer matches this run.')
             writer = cv2.VideoWriter(str(temporary),cv2.VideoWriter_fourcc(*'mp4v'),fps,size)
             if not writer.isOpened():
                 raise RuntimeError('Cannot create reviewed video.')
-            grouped = {}
-            for row in self.rows:
-                grouped.setdefault(int(row['frame_number']), []).append(row)
             for number in range(1,total+1):
                 if self.isInterruptionRequested():
                     raise RuntimeError('Video regeneration cancelled.')
                 ok, frame = cap.read()
                 if not ok:
                     raise RuntimeError(f'Video decode failed at frame {number}.')
-                rows = grouped.get(number, [])
-                if any(r.get('review_status') in ('confirmed','rejected') for r in rows):
-                    raw = cv2.imread(str(self.root / rows[0]['frame_image']))
-                    if raw is None or (raw.shape[1], raw.shape[0]) != size:
-                        raise RuntimeError(f'Missing or invalid raw image for frame {number}.')
-                    frame = draw_review(raw,rows,context=context_for(self.root,number))
-                    cv2.putText(frame,f'Frame {number} | Reviewed',(8,24),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),2)
+                annotations = [dict(zip(('x1','y1','x2','y2'), det['bbox']),
+                                    species=det['species'], review_status='confirmed')
+                               for det in frames.get(number, [])]
+                frame = draw_review(frame, annotations)
+                add_frame_label(frame, number, format_timestamp((number-1)/fps))
                 writer.write(frame)
                 self.progress.emit(round(number/total*100))
             writer.release(); writer = None
             cap.release()
-            if not backup.exists():
-                atomic_copy(self.video, backup)
+            backup = original_video_backup(target)
+            if target.exists() and not backup.exists():
+                atomic_copy(target, backup)
             os.replace(temporary,target)
             self.succeeded.emit(str(target))
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
-            cap.release()
-            if writer is not None:
-                writer.release()
+            if cap is not None: cap.release()
+            if writer is not None: writer.release()
             temporary.unlink(missing_ok=True)

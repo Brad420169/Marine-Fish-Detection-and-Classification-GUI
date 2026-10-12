@@ -72,5 +72,7 @@ class PipelineWorker(QThread):
             else:
                 self.completed.emit(outputs)
 
+        except InterruptedError:
+            self.cancelled.emit()
         except Exception as exc:
             self.error.emit(str(exc))

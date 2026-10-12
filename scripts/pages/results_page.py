@@ -177,7 +177,7 @@ class ResultsPage(QWidget):
             button.setStyleSheet("text-align: left; padding-left: 22px;")
 
         # Review Low-Confidence Frames widget
-        self.review_group = QGroupBox("Review Detections")
+        self.review_group = QGroupBox("Annotate Data")
         review_layout = QVBoxLayout(self.review_group)
         review_layout.setSpacing(10)
 
@@ -187,7 +187,7 @@ class ResultsPage(QWidget):
         caption.setWordWrap(True)
         review_layout.addWidget(caption)
 
-        self.review_btn = QPushButton("   Start Review")
+        self.review_btn = QPushButton("   Open Annotations")
         self.review_btn.setIcon(QIcon(str(ROOT_DIR / "assets" / "start_review.png")))
         self.review_btn.setIconSize(QSize(20, 20))
         self.review_btn.setStyleSheet("text-align: left; padding-left: 22px;")
