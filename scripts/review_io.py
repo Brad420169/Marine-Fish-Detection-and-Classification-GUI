@@ -1,6 +1,7 @@
 """Durable review storage and rendering shared by the UI and video exporter."""
 import csv
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -9,7 +10,25 @@ from pathlib import Path
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
-REVIEW_COLUMNS = ['original_species', 'review_status', 'annotation_source', 'annotation_id']
+REVIEW_COLUMNS = ['original_species', 'review_status', 'annotation_source', 'annotation_id', 'original_bbox', 'manual_track_id', 'track_keyframe']
+
+
+def review_box(row):
+    box = [float(row[k]) for k in ('x1', 'y1', 'x2', 'y2')]
+    if not all(map(math.isfinite, box)) or box[0] < 0 or box[1] < 0 or box[2] <= box[0] or box[3] <= box[1]:
+        raise ValueError('Invalid review bounding box.')
+    return box
+
+
+def original_box(row):
+    """Model identity stays at its original coordinates when its box is edited."""
+    value = row.get('original_bbox')
+    if not value:
+        return review_box(row)
+    box = json.loads(value)
+    if not isinstance(box, list) or len(box) != 4:
+        raise ValueError('Invalid original bounding box.')
+    return review_box(dict(zip(('x1', 'y1', 'x2', 'y2'), box)))
 
 
 def load_review_rows(path):
@@ -58,7 +77,7 @@ def save_rows(path, rows, fields):
 def draw_review(frame, rows, selected=-1, context=()):
     canvas = frame.copy()
     # New runs retain all detections on flagged frames, including confident fish.
-    flagged_boxes = {tuple(round(float(r[k]), 2) for k in ('x1','y1','x2','y2')) for r in rows if r.get('annotation_source') != 'manual'}
+    flagged_boxes = {tuple(round(v, 2) for v in original_box(r)) for r in rows if r.get('annotation_source') != 'manual'}
     for det in context:
         if tuple(round(float(v), 2) for v in det['bbox']) not in flagged_boxes:
             x1,y1,x2,y2 = map(round, det['bbox'])

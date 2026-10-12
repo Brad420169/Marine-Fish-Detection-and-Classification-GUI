@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 projects/
 
-# Test code
-tests/
+# Local test scratch files; keep the review regression suite.
+tests/*
+!tests/test_review_playback.py
 
 
 # Models - only distribute the default

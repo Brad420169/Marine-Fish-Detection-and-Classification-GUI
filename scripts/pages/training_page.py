@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLa
 
 from paths import ROOT_DIR
 from yolo_export import ExportWorker, reviewed_frames
+from training_metrics import parse_metrics
+from pages.training_dashboard import TrainingDashboard
 
 
 class TrainingPage(QWidget):
@@ -19,6 +21,7 @@ class TrainingPage(QWidget):
         self.root = None
         self.export_worker = None
         self.best_weights = None
+        self._metric_buffer = ''
         self.job_kind = 'training'
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -106,6 +109,8 @@ class TrainingPage(QWidget):
         self.evaluate.clicked.connect(self._evaluate); buttons.addWidget(self.evaluate)
         train_layout.addLayout(buttons)
         self.dataset.textChanged.connect(self._dataset_changed)
+        self.dashboard = TrainingDashboard()
+        train_layout.addWidget(self.dashboard)
         self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(220)
         self.log.setPlaceholderText('Training progress appears here.'); train_layout.addWidget(self.log)
         layout.addWidget(train_group)
@@ -235,6 +240,8 @@ class TrainingPage(QWidget):
                      '--model', model, '--epochs', str(self.epochs.value()),
                      '--imgsz', str(self.image_size.value() * 32), '--batch', str(self.batch.value()),
                      '--patience', str(self.patience.value()), '--name', name]
+        self._metric_buffer = ""
+        self.dashboard.reset(self.epochs.value())
         self.log.clear()
         self.log.appendPlainText('Starting training. Pretrained weights may download on first use.\n')
         self.job_kind = 'training'; self.best_weights = None
@@ -254,9 +261,20 @@ class TrainingPage(QWidget):
     def _read_output(self):
         output = bytes(self.process.readAllStandardOutput()).decode(errors='replace')
         if output:
+            if self.job_kind == "training":
+                self._consume_metrics(output)
             self.log.moveCursor(QTextCursor.MoveOperation.End)
             self.log.insertPlainText(output)
             self.log.ensureCursorVisible()
+
+    def _consume_metrics(self, output):
+        self._metric_buffer += output
+        lines = self._metric_buffer.split('\n')
+        self._metric_buffer = lines.pop()[-65536:]
+        for line in lines:
+            result = parse_metrics(line.strip())
+            if result:
+                self.dashboard.update_epoch(*result)
 
     def _dataset_changed(self):
         self.best_weights = None
@@ -265,11 +283,16 @@ class TrainingPage(QWidget):
     def _process_error(self, error):
         self.log.appendPlainText(f'Process error: {error.name}')
         if error == QProcess.ProcessError.FailedToStart:
+            if self.job_kind == "training":
+                self.dashboard.finish(False)
             self.start.setEnabled(True)
             self.stop.setEnabled(False)
 
     def _finished(self, code, status):
         self._read_output()
+        if self.job_kind == "training":
+            self._consume_metrics("\n")
+            self.dashboard.finish(code == 0 and status == QProcess.ExitStatus.NormalExit)
         if code == 0 and self.job_kind == 'training':
             for line in self.log.toPlainText().splitlines():
                 if line.startswith('BEST_WEIGHTS='):

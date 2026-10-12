@@ -193,21 +193,34 @@ The review page places the video frame in the centre, missed-fish annotations on
 3. Use the tick to keep a detection or the cross to reject a false positive or duplicate. Crossed rows are struck out and their boxes disappear; the tick can undo a rejection before saving.
 4. Click **Confirm & Next** to save the frame's decisions and advance. Confirm frames that are already correct too.
 
-Resolved rows are hidden from the table. Click their boxes on the image to reopen their species editor. Rejecting a manual annotation deletes it when confirmed; rejecting a model detection records the rejection so refreshed statistics can exclude it.
+Resolved rows are hidden from the table. Click their boxes on the image to reopen their species editor. With a box selected, press **Delete** to remove it and its visible table row immediately. This saves only that deletion, without confirming the frame. Press **Ctrl+Z** to restore the last deleted box and its row; repeated presses restore earlier deletions in reverse order. This also works after stepping to another frame. Undo history resets when you confirm a frame, save a new annotation, or reopen a run. Delete and Ctrl+Z inside a species text field retain their normal text-editing behavior. Rejecting a manual annotation deletes it when confirmed; rejecting a model detection records the rejection so refreshed statistics can exclude it.
 
-### Choose which frames to review
+### Play or step through the video
 
-**Review frames only** is enabled by default. **Previous**, **Skip**, and **Confirm & Next** then move between flagged frames. Untick it to inspect every frame, including confident predictions and fish the model missed.
+Click **Play** to advance through every video frame at the source frame rate; **Pause** stops on the current frame. A **bright red outline around the image** marks frames containing flagged model detections. Playback does not confirm frames or save decisions. It pauses when you start editing or leave the page, and stops at the end of the video. Slower machines may play below the source frame rate so no frames are skipped.
 
-Click the frame counter to jump to a frame number. When the original source video is unavailable, review is limited to saved flagged frames and the checkbox is disabled. **Skip** moves on without confirming the frame; navigation prompts before discarding unsaved edits.
+The **Review frames only** checkbox is temporarily hidden. **Left/Right arrow keys**, **Previous**, and **Skip** move one frame at a time without confirming it. **Confirm & Next** saves and confirms before advancing. Click the frame counter to jump to a frame number. When no video can be opened, playback is disabled and navigation uses the saved review frames. Navigation asks before discarding unconfirmed edits.
 
 ### Add missed fish
 
-Drag a box around a missed fish in the main image, then choose its species in the **Annotations** panel. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
+Drag a rectangle around a missed fish directly in the image. Use **Shift+drag** to draw over an existing box instead of moving it. Choose the species in the Annotations panel. **Track?** controls appear below the selected new box: click the **tick** to enable tracking, or leave the default **cross** for a single-frame box. No popup interrupts drawing. There is no Draw box button. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
 
 For small fish, use **Ctrl+scroll** to zoom, **scroll** to pan vertically, and **Shift+scroll** to pan sideways. Boxes are saved in the original frame coordinates regardless of zoom.
 
 Manual annotations contribute to detection counts and Max-N after the results refresh. They do not invent model confidence scores or track IDs; mean confidence uses model detections only.
+
+### Move boxes and track across frames
+
+Click and drag inside an existing box to move it. Hold **Ctrl** and drag an edge to resize its width or height, or a corner to resize both. Both model boxes and manual annotations can be moved, including while zoomed in; their coordinates stay inside the frame. Click **Confirm & Next** to save position changes. Model boxes retain their original detection identity, so moving one updates the same detection in refreshed results rather than creating a duplicate.
+
+Manual tracking copies a box forward one frame at a time:
+
+1. Draw a box, choose its species in the Annotations panel, and click the **tick** below the box to opt into tracking. The current frame stays open; there is no end-frame picker.
+2. Click **Confirm & Next** to save this frame and copy the box to the next frame.
+3. Drag the copied box onto the fish, then confirm again to continue. The latest position and species are copied.
+4. When the fish disappears, select its box and press **Delete** to stop tracking from that frame onward. **Ctrl+Z** restores the deletion until you confirm or save another annotation.
+
+Playback, arrow keys, and Skip only navigate; they do not copy boxes. Copied boxes remain pending until confirmed, and the next frame is not marked reviewed. Confirming a frame again never duplicates or overwrites an existing next-frame box. Deleting a track also removes any later boxes already saved for that track; earlier frames stay intact. Existing range-based tracks remain readable, but no longer interpolate. Manual tracks have no model confidence or AI-generated track ID.
 
 ### Return to refreshed results
 

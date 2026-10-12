@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from review_io import load_review_rows
+from review_io import load_review_rows, original_box
 
 
 def fingerprint(value):
@@ -115,7 +115,7 @@ def evaluate(original, rows, completion, legacy_frames=(), trained_species=None)
                         else:
                             outside_missed += 1
             else:
-                lookup[box_key(row[k] for k in ('x1', 'y1', 'x2', 'y2'))].append(row)
+                lookup[box_key(original_box(row))].append(row)
         for detection in by_frame.get(number, []):
             predicted = detection['species'].strip()
             matches = lookup.get(box_key(detection['bbox']))

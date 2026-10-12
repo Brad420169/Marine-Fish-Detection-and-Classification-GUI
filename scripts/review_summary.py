@@ -9,7 +9,7 @@ import tempfile
 import cv2
 
 from pipeline import SUMMARY_FIELDS, extract_maxn_example_frames, format_timestamp
-from review_io import save_rows
+from review_io import save_rows, original_box, review_box
 
 
 def box_key(frame, box):
@@ -24,7 +24,7 @@ def merge_detections(original, reviews):
         if row.get("annotation_source") == "manual":
             manual.append(row)
             continue
-        key = box_key(row['frame_number'], [row[k] for k in ('x1', 'y1', 'x2', 'y2')])
+        key = box_key(row['frame_number'], original_box(row))
         lookup[key].append(row)
     merged = []
     for frame in original['frames']:
@@ -41,6 +41,7 @@ def merge_detections(original, reviews):
                     if not review['species'].strip():
                         raise ValueError('A confirmed detection has an empty species name.')
                     det['species'] = review['species'].strip()
+                    det['bbox'] = review_box(review)
             detections.append(det)
         merged.append({'frame_number': frame['frame_number'], 'detections': detections})
     if any(lookup.values()):

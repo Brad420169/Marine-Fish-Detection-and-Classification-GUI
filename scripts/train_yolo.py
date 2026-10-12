@@ -2,6 +2,8 @@
 import argparse
 from pathlib import Path
 
+from training_metrics import attach_metrics
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -36,6 +38,7 @@ def main():
     batch = args.batch or (-1 if device == 0 else 4)
     print(f'Dataset: {args.data.resolve()}\nDevice: {device}\nBatch: {batch}', flush=True)
     model = YOLO(args.model)
+    attach_metrics(model)
     model.train(
         data=str(args.data.resolve()), epochs=args.epochs, imgsz=args.imgsz,
         batch=batch, device=device, workers=0, project=str(args.data.resolve().parent / 'runs'),
