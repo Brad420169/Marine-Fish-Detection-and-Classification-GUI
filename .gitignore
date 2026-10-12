@@ -3,9 +3,9 @@ __pycache__/
 *.pyc
 projects/
 
-# Local test scratch files; keep the review regression suite.
-tests/*
-!tests/test_review_playback.py
+# Keep local test folders out of Git.
+/tests/
+/Tests/
 
 
 # Models - only distribute the default
