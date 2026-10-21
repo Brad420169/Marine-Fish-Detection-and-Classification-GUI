@@ -45,9 +45,11 @@ Choose the tutorial that matches your starting point. Each workflow begins by cr
 
 Follow the detection workflow: select your video and model, run detection, review the annotations, and explore the results.
 
-<video src="./assets/Detect.mp4" controls width="800"></video>
+<!-- <video src="./assets/Detect.mp4" controls width="800"></video>
 
-[Watch the Fish Detection tutorial](./assets/Detect.mp4)
+[Watch the Fish Detection tutorial](./assets/Detect.mp4) -->
+https://github.com/user-attachments/assets/818c5b37-be47-4773-8d9f-978ede435ffe
+
 
 ### User 2: Generate Training Data
 
@@ -55,9 +57,11 @@ Follow the detection workflow: select your video and model, run detection, revie
 
 Start in **Annotate Data**: load a video, draw and label fish, then export reviewed frames as a YOLO training dataset.
 
-<video src="./assets/Annotate.mp4" controls width="800"></video>
+<!-- <video src="./assets/Annotate.mp4" controls width="800"></video>
 
-[Watch the Generate Training Data tutorial](./assets/Annotate.mp4)
+[Watch the Generate Training Data tutorial](./assets/Annotate.mp4) -->
+https://github.com/user-attachments/assets/1e629fb4-20c2-45b1-82e4-2d2c73295168
+
 
 ### User 3: Train an AI Model
 
@@ -65,9 +69,10 @@ Start in **Annotate Data**: load a video, draw and label fish, then export revie
 
 Start in **Train a Model**: load your YOLO dataset’s `data.yaml`, validate it, choose your training settings, and train a model to use in the app.
 
-<video src="./assets/Train_Model.mp4" controls width="800"></video>
+<!-- <video src="./assets/Train_Model.mp4" controls width="800"></video>
 
-[Watch the Train an AI Model tutorial](./assets/Train_Model.mp4)
+[Watch the Train an AI Model tutorial](./assets/Train_Model.mp4) -->
+https://github.com/user-attachments/assets/dadffcb2-fd3d-4065-80d7-ab51183c1109
 
 ---
 
