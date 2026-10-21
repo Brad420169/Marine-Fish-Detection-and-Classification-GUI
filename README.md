@@ -78,7 +78,7 @@ https://github.com/user-attachments/assets/dadffcb2-fd3d-4065-80d7-ab51183c1109
 
 ## Quick Start
 
-**Platforms:** Windows, Linux (Ubuntu 24.04), and Apple Silicon macOS (`osx-arm64`, pending real-Mac validation). Intel Macs are not included. Allow approximately **5 GB of free disk space**, plus space for videos and results.
+**Platforms:** Windows, Linux (Ubuntu 24.04), and Apple Silicon macOS (`osx-arm64`, pending real-Mac validation). Intel Macs are not included. Allow **at least 15 GB of free disk space** for the app, dependencies, and download cache, plus space for videos and results. The Linux environment alone uses approximately 8 GB; requirements vary by platform.
 
 Choose your platform: [<img src="assets/platforms/windows.svg" width="22" alt=""> **Windows**](#windows) · [<img src="assets/platforms/linux.svg" width="22" alt=""> **Linux**](#linux-and-macos) · [<img src="assets/platforms/macos.svg" width="22" alt=""> **macOS**](#linux-and-macos)
 
@@ -135,7 +135,14 @@ For a different installation directory, run `INSTALL_DIR="$HOME/My Marine Apps" 
 - **Linux:** the script creates a desktop icon and application-menu entry, including support for localized desktop folder names. If prompted, right-click the icon and choose **Allow Launching**. Some desktop environments display launchers only in the application menu.
 - **macOS:** the script creates **Marine Fish Detection GUI.app** on the Desktop with its icon. If macOS blocks the unsigned launcher, right-click it and choose **Open**. The script does not disable Gatekeeper or remove quarantine attributes.
 
-**First Mac test:** start with `pixi run GUI` from the repository so errors remain visible in Terminal. Create a project, load a short video, run each model type you use (YOLO `.pt` and/or RF-DETR `.pth`), review detections, and open results and output files. Separately test YOLO training if needed, then close the app and test the desktop launcher. CPU detection can be slow.
+**First Mac test:** open Terminal and run (adjust the path if you chose a different installation directory):
+
+```bash
+cd "$HOME/MarineApps/Marine-Fish-Detection-and-Classification-GUI"
+pixi run --locked GUI
+```
+
+This keeps errors visible in Terminal. Create a project, load a short video, run each model type you use (YOLO `.pt` and/or RF-DETR `.pth`), review detections, and open results and output files. Separately test YOLO training if needed, then close the app and test the desktop launcher. CPU detection can be slow.
 
 ### Launch and pin the app
 
@@ -302,12 +309,12 @@ Training saves weights, including `best.pt`, under the dataset's `runs` folder. 
 
 ## Updating
 
-To update the application, open PowerShell in the application folder and run:
+To update the application, close it and open PowerShell (Windows) or Terminal (Linux/macOS) in the application folder. Run each command in order and stop if one fails:
 
 ```powershell
-git pull
+git pull --ff-only
 git lfs pull
-pixi install
+pixi install --locked
 ```
 
 ## Project Structure
@@ -432,14 +439,14 @@ The Windows/Linux environment includes CUDA-enabled PyTorch 2.7.1 with CUDA 12.6
 
  
 ### `git` is not recognised / not found
-**Windows & Linux** Close and reopen the terminal. If the problem continues, confirm it is installed with `git --version`.
+Close and reopen PowerShell/Terminal. The installer installs Git and Git LFS through Pixi. If needed, run `pixi global install git git-lfs`, then check `git --version` and `git lfs version`.
  
 ### `pixi` is not recognised / not found
 Close and reopen PowerShell/Terminal, then check:
 ```
 pixi --version
 ```
-**Linux:** if it still isn't found, `pixi` may not be on your `PATH` for non-login shells. Run `which pixi` to find its location, then use that full path when running `pixi` commands (or add it to `~/.bashrc`).
+**Linux/macOS:** for the default Pixi installation, run `export PATH="$HOME/.pixi/bin:$PATH"` and try again. If that works, add the same line to your shell configuration (`~/.zshrc` for the default macOS shell, or `~/.bashrc` for Bash). If Pixi was installed elsewhere, use its actual directory instead.
  
 ### Model files did not download
 Open PowerShell/Terminal in the application folder and run:
@@ -448,11 +455,31 @@ git lfs install
 git lfs pull
 ```
  
+### Installation stopped partway through
+The installer refuses to overwrite an existing application folder. If cloning completed, open PowerShell/Terminal in that folder and resume with:
+
+```text
+git lfs install --local
+git lfs pull
+pixi install --locked
+```
+
+Stop if a command fails. Once these succeed, recreate the shortcut using the command for your platform:
+
+- **Windows:** `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_shortcut.ps1`
+- **Linux:** `bash setup/create_linux_shortcut.sh`
+- **macOS:** `bash setup/create_macos_shortcut.sh`
+
+If cloning did not complete, choose a new installation directory and rerun the installer. Do not delete an existing folder containing your projects or results. If Pixi reports an outdated lockfile, update the checkout first; do not delete `pixi.lock` to work around it.
+
+### macOS installer rejects the platform
+Run `uname -m` and `sw_vers -productVersion`. The installer requires `arm64` and macOS 13 or newer. On an M-series Mac reporting `x86_64`, close Terminal, turn off **Open using Rosetta** in Terminal's Finder **Get Info** window if enabled, and reopen it. Intel Macs are not supported by this environment.
+
 ### The application does not launch
 Open PowerShell/Terminal in the application folder and run:
 ```
-pixi install
-pixi run GUI
+pixi install --locked
+pixi run --locked GUI
 ```
 Any startup errors will then be displayed in the terminal.
  

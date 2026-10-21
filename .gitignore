@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 projects/
 
-# Keep local test folders out of Git.
-/tests/
+# Keep local tests out of Git, except installer regression checks.
+/tests/*
+!/tests/test_installation.py
 /Tests/
 
 
