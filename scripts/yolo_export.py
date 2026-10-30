@@ -1,5 +1,6 @@
 """Export fully reviewed video frames as a YOLO detection dataset."""
 import json
+from collections import defaultdict
 import math
 from pathlib import Path
 import tempfile
@@ -24,11 +25,14 @@ def reviewed_frames(root):
     if completion.get('source') != fingerprint(original):
         return original, rows, []
     total = int(original.get('total_frames', 0))
+    by_frame = defaultdict(list)
+    for row in rows:
+        by_frame[row['frame_number']].append(row)
     verified = sorted(int(number) for number, digest in completion.get('frames', {}).items()
                       if number.isdigit() and 1 <= int(number) <= total
-                      and digest == frame_fingerprint(rows, int(number))
+                      and digest == frame_fingerprint(by_frame[int(number)], int(number))
                       and all(row['review_status'] in ('confirmed', 'rejected')
-                              for row in rows if row['frame_number'] == int(number)))
+                              for row in by_frame[int(number)]))
     return original, rows, verified
 
 

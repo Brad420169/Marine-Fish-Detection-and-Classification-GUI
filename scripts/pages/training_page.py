@@ -121,7 +121,7 @@ class TrainingPage(QWidget):
         for name in ('yolo11n.pt', 'yolo11s.pt'):
             self.model.addItem(name, name)
         self.model.setCurrentText('yolo11s.pt')
-        self.model.setToolTip('Use the model that annotated the video to fine-tune its fish knowledge, or start from general YOLO11 weights. Only YOLO .pt files work here; RF-DETR .pth files need a different trainer.')
+        self.model.setToolTip('Use the model that annotated the video to fine-tune its fish knowledge, or start from general YOLO11 weights. Only YOLO .pt files work here; RF-DETR .pth and Darknet .weights files need different trainers.')
         model_row = QHBoxLayout(); model_row.addWidget(QLabel('Starting model')); model_row.addWidget(self.model, 1)
         choose_model = QPushButton('Choose .pt…'); choose_model.clicked.connect(self._choose_model)
         model_row.addWidget(choose_model)

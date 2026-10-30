@@ -197,7 +197,7 @@ For the detection workflow, choose **Detect Fish**:
 ![Run Detection page with video input, model selector, detection settings, and past runs](./assets/screenshots/detection.png)
 
 1. In **Video Input**, click **Browse…** or drop a video onto the dashed area.
-2. In **Model Input**, choose installed model weights. Use **Add model weights…** to import compatible YOLO `.pt` or RF-DETR `.pth` weights.
+2. In **Model Input**, choose installed model weights. Use **Add model weights…** to import compatible YOLO `.pt`, RF-DETR `.pth`, or Darknet `.weights` with its matching `.cfg`.
 3. Set the detection and review thresholds:
 
 | Setting | What it changes |
@@ -224,6 +224,25 @@ For manual work, choose **Annotate Data** in the sidebar, browse for a video or 
 The annotation page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
 
 ![Review Detections showing a fish frame, species editor, confirm and reject icons, and navigation controls](./assets/screenshots/review.png)
+
+### SAM-assisted annotation
+
+SAM 2.1 Tiny uses the existing Ultralytics/PyTorch environment. Install its optional **75 MiB** checkpoint once from the app folder:
+
+```bash
+pixi run setup-sam
+```
+
+In **Annotate Data**, click the image to focus it, then:
+
+1. Tick **Automatic Annotation (SAM)**, then **left-click** inside a fish to start a mask preview.
+2. Keep using **left-click** to include missed parts. Use **right-click** to exclude unwanted regions. Wait for each preview to finish before adding another point.
+3. Enter the class name in the **SAM** field in the left panel and press **Enter**. This generates a box around the mask and saves it through the normal annotation flow. A new species name uses the existing confirmation prompt.
+4. Use **Confirm & Next** separately when the entire frame has been checked. The saved box can be edited and exported like a manually drawn box.
+
+**Ctrl+Z** discards the preview or undoes the newly saved SAM box before frame confirmation. **Esc** also discards the preview. Untick SAM to return to ordinary drawing and editing. Leaving a frame with an unfinished preview asks before discarding it. A negative click cannot start a new annotation. Ordinary right-drag exclusion remains available when SAM is inactive.
+
+The first click loads the model and encodes the frame; later clicks reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species, automatically confirm frames, or track through video. The checkpoint is stored under `models/sam/`, separate from detection weights.
 
 ### Inspect and correct predictions
 
@@ -350,6 +369,22 @@ Marine-Fish-Detection-and-Classification-GUI/
 Application environments and user-created project information are generated locally and are not stored in the repository.
 
 Detection outputs are stored in the location the user selects when creating a project.
+
+## Using Darknet YOLO models
+
+Darknet models use separate files, all in the same folder with the same base name:
+
+```text
+models/Fish_Only_YOLOv4.weights
+models/Fish_Only_YOLOv4.cfg
+models/Fish_Only_YOLOv4.names
+```
+
+The `.cfg` must match the trained weights. The optional `.names` contains one class label per line in training order (for a single fish class, `fish`). Without it, labels are `class_0`, `class_1`, etc. The label count must match the configuration.
+
+Use **Add model weights…** and select `.weights`; the matching `.cfg` and optional `.names` are copied with it. You can also place the files in `models/` and refresh the model selector. Darknet models work in detection and **Suggest boxes**, using OpenCV on **CPU** with ByteTrack tracking. They cannot be trained with the app's Ultralytics YOLO trainer.
+
+A ZIP containing `.cfg` and `.weights` is not a PyTorch checkpoint, even if named `.pt`. Extract the files first and select `.weights`; renaming or zipping them does not convert the model.
 
 ## Adding a New AI Object/Fish Detector Model
 

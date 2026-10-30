@@ -8,6 +8,7 @@ from uuid import uuid4
 from pathlib import Path
 
 import cv2
+import numpy as np
 from PyQt6.QtCore import QEvent, QRect, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QImage, QPixmap, QShortcut, QKeySequence, QCursor
 from PyQt6.QtWidgets import (
@@ -70,6 +71,9 @@ class ImageLabel(QLabel):
         self.on_click = None
         self.on_draw = None
         self.on_exclude = None
+        self.on_sam = None
+        self.sam_enabled = False
+        self.sam_active = False
         self.excluding = False
         self.on_zoom = None
         self.on_interact = None
@@ -178,6 +182,15 @@ class ImageLabel(QLabel):
         ax, ay = self.anchor(point)
         if not (0 <= ax <= 1 and 0 <= ay <= 1):
             return
+        self.setFocus()
+        resizing = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if self.sam_enabled and self.on_sam and not resizing:
+            self.origin = None
+            self.on_sam(*self.fraction(point), event.button() == Qt.MouseButton.LeftButton)
+            event.accept()
+            return
+        if self.sam_active and not resizing:
+            return
         self.origin = point
         self.excluding = event.button() == Qt.MouseButton.RightButton
         if self.excluding:
@@ -247,6 +260,13 @@ class ReviewPage(QWidget):
         self.frame_interval = 1
         self.assist_weights = None
         self.suggestion_worker = None
+        from sam_assist import SAMSession
+        self.sam_session = SAMSession()
+        self.sam_points = []
+        self.sam_labels = []
+        self.sam_mask = None
+        self.sam_frame_token = 0
+        self.sam_busy = False
         self.path = None; self.root = None; self.video = None; self.cap = None
         self.rows = []; self.fields = []; self.names = []; self.pending = []; self.decisions = []
         self.flagged_frames = []; self.detections_by_frame = {}
@@ -259,6 +279,7 @@ class ReviewPage(QWidget):
         self.copied_annotation = None
         self.rows_by_frame = {}
         self.review_complete_count = 0
+        self._completion_cache = None
         self.playback = QTimer(self)
         self.playback.setSingleShot(True)
         self.playback.timeout.connect(self.play_next_frame)
@@ -274,7 +295,7 @@ class ReviewPage(QWidget):
         title = QLabel('Annotate Data'); title.setObjectName('pageTitle')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(title)
-        hint = QLabel('Drag empty space to draw; drag boxes to move. Shift-drag draws over boxes. Ctrl+C copies the selected box; Ctrl+V pastes at the mouse. Delete removes. Arrows navigate.')
+        hint = QLabel('Enable SAM for left-click include / right-click exclude. Type a class and press Enter to create its box. Ctrl+Z undoes SAM. Drag empty space to draw; drag boxes to move. Shift-drag draws over boxes. Ctrl+C copies the selected box; Ctrl+V pastes at the mouse. Delete removes. Arrows navigate.')
         hint.setWordWrap(True); hint.setAlignment(Qt.AlignmentFlag.AlignCenter); root.addWidget(hint)
         self.progress = QLabel()
         self.progress.setTextFormat(Qt.TextFormat.RichText)
@@ -324,6 +345,20 @@ class ReviewPage(QWidget):
             step.addWidget(text, 1)
             panel_layout.addLayout(step)
         panel_layout.addSpacing(4)
+        self.sam_checkbox = QCheckBox('Automatic Annotation (SAM)')
+        self.sam_checkbox.setToolTip('Toggle automatic annotation: Ctrl+A (outside text fields)')
+        self.sam_checkbox.toggled.connect(self.toggle_sam)
+        panel_layout.addWidget(self.sam_checkbox)
+        self.sam_panel = QWidget(panel)
+        sam_layout = QVBoxLayout(self.sam_panel)
+        sam_layout.setContentsMargins(0, 0, 0, 0)
+        self.sam_class = QLineEdit()
+        self.sam_class.setPlaceholderText('Class name, then Enter')
+        self.sam_class.setAccessibleName('SAM annotation class name')
+        self.sam_class.returnPressed.connect(self.finish_sam)
+        sam_layout.addWidget(self.sam_class)
+        panel_layout.addWidget(self.sam_panel)
+        self.sam_panel.hide()
         self.annotations = QTableWidget(0,2)
         self.annotations.setHorizontalHeaderLabels(['Species',''])
         self.annotations.setColumnWidth(0,115)
@@ -342,6 +377,7 @@ class ReviewPage(QWidget):
         self.image.on_click = self.select_box
         self.image.on_draw = self.draw_box
         self.image.on_exclude = self.exclude_area
+        self.image.on_sam = self.sam_click
         self.image.on_zoom = self.update_controls
         self.image.on_resize_start = self.begin_box_resize
         self.image.on_drag_start = self.begin_box_drag
@@ -403,6 +439,12 @@ class ReviewPage(QWidget):
                 ('Draw', 'Drag empty space; <b>Shift + drag</b> draws over an existing box.'),
                 ('Label', 'Choose a species, then press <b>Enter</b> to save the box.'),
                 ('Track', 'After Enter saves a box, optionally enable Track in the Annotations panel. Off by default; you can continue without choosing.'),
+            )),
+            ('Automatic Annotation (SAM)', (
+                ('Enable', 'Tick <b>Automatic Annotation (SAM)</b> or press <b>Ctrl + A</b> to toggle it. In text fields, Ctrl + A selects all text. No key needs to be held.'),
+                ('Select / refine', '<b>Left-click</b> inside a fish, then left-click missed parts to include them. <b>Right-click</b> unwanted parts to exclude them. Wait for each preview.'),
+                ('Class / save', 'Type the fish class in the SAM field and press <b>Enter</b> to generate and save its bounding box. Confirm the frame separately.'),
+                ('Undo / exit', '<b>Ctrl + Z</b> discards the preview or undoes the newly saved SAM box before frame confirmation. <b>Esc</b> cancels a preview. Untick SAM to draw and edit normally.'),
             )),
             ('Edit boxes', (
                 ('Move / resize', 'Drag a box to move it. <b>Ctrl + drag</b> an edge or corner to resize.'),
@@ -820,6 +862,8 @@ class ReviewPage(QWidget):
         return None
 
     def show_frame(self):
+        self.sam_frame_token += 1
+        self.clear_sam(render=False)
         self.track_annotation_id = None
         self.track_prompt.hide()
         self.box_edits = {}
@@ -913,13 +957,28 @@ class ReviewPage(QWidget):
         else:species.setCurrentIndex(-1)
         return species
 
+    def completed_frame_count(self):
+        # Cache only the count; file metadata invalidates it after saves or external edits.
+        signature = [str(self.root.resolve())]
+        for name in ('original_detections.json', 'low_confidence_review.csv', 'review_completion.json'):
+            path = self.root / name
+            try:
+                stat = path.stat()
+                signature.append((stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+            except FileNotFoundError:
+                signature.append(None)
+        if self._completion_cache is None or self._completion_cache[0] != signature:
+            from yolo_export import reviewed_frames
+            count = len(reviewed_frames(self.root)[2])
+            self._completion_cache = (signature, count)
+        return self._completion_cache[1]
+
     def update_controls(self):
         complete = self.review_complete_count
         summary = f'{complete} of {len(self.flagged_frames)} flagged frames reviewed'
         if self.manual_session and self.root:
-            from yolo_export import reviewed_frames
             try:
-                complete = len(reviewed_frames(self.root)[2])
+                complete = self.completed_frame_count()
                 summary = f'{complete} frames complete • interval {self.frame_interval}'
             except (OSError, ValueError, KeyError):
                 summary = 'Completion unavailable'
@@ -1070,6 +1129,32 @@ class ReviewPage(QWidget):
         changing_frame = entry['frame'] != self.frame_number
         if changing_frame and not self.discard_ok():
             return
+        if 'sam_added' in entry:
+            row = entry['sam_added']
+            if row not in self.rows or row not in self.current():
+                QMessageBox.warning(self, 'Cannot undo SAM', 'This annotation has changed since it was created.')
+                return
+            index = self.current().index(row)
+            rows = [r for r in self.rows if r.get('annotation_id') != row['annotation_id']]
+            try:
+                save_rows(self.path, rows, self.fields)
+            except OSError as exc:
+                QMessageBox.critical(self, 'SAM not undone', str(exc))
+                return
+            self.loading = True
+            self.rows = rows
+            self.table.removeRow(index)
+            self.decisions.pop(index)
+            self.box_edits = {i - (i > index): box for i, box in self.box_edits.items() if i != index}
+            self.track_annotation_id = None
+            self.track_prompt.hide()
+            self.selected = max(0, index - 1)
+            self.loading = False
+            self.deletion_undo.pop()
+            self.refresh_flagged()
+            self.update_controls(); self.render()
+            self.status.setText('SAM bounding box undone.')
+            return
         if 'changes' in entry:
             # Restore just rows touched by this deletion, never unrelated edits.
             rows = list(self.rows)
@@ -1196,6 +1281,17 @@ class ReviewPage(QWidget):
             self.crop.clear();return
         rows=self.all_rows()
         self.canvas=draw_review(self.raw,rows,self.selected,self.frame_context())
+        if self.sam_mask is not None:
+            # Native uint8 blending avoids large float64 arrays for full-resolution masks.
+            tint = np.empty_like(self.canvas)
+            tint[:] = (70, 220, 100)
+            cv2.addWeighted(self.canvas, 0.55, tint, 0.45, 0, dst=tint)
+            cv2.copyTo(tint, self.sam_mask.astype(np.uint8), self.canvas)
+        for (x, y), include in zip(self.sam_points, self.sam_labels):
+            colour = (80, 230, 100) if include else (70, 70, 255)
+            cv2.circle(self.canvas, (round(x), round(y)), 5, colour, -1)
+            cv2.putText(self.canvas, '+' if include else '-', (round(x)+7, round(y)-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1)
         self.image.set_frame(self.canvas)
         if 0<=self.selected<len(rows):
             row=rows[self.selected];h,w=self.raw.shape[:2]
@@ -1285,10 +1381,58 @@ class ReviewPage(QWidget):
         layout=QVBoxLayout(dialog);scroll=QScrollArea();label=QLabel();label.setPixmap(pixmap(self.canvas));scroll.setWidget(label);layout.addWidget(scroll);dialog.exec()
 
     def discard_ok(self):
-        changed=bool(self.pending) or bool(self.box_edits) or any(a['species']!=b['species'] or (a['review_status']!=b['review_status'] and b['review_status']!='pending') or (b['review_status']=='pending' and a['review_status']!='confirmed') for a,b in zip(self.drafts(),self.current()))
+        if self.suggestion_worker: return False
+        changed=bool(self.sam_points) or bool(self.pending) or bool(self.box_edits) or any(a['species']!=b['species'] or (a['review_status']!=b['review_status'] and b['review_status']!='pending') or (b['review_status']=='pending' and a['review_status']!='confirmed') for a,b in zip(self.drafts(),self.current()))
         return not changed or QMessageBox.question(self,'Unsaved edits','Leave this frame and discard unconfirmed edits?')==QMessageBox.StandardButton.Yes
 
     def eventFilter(self, obj, event):
+        # Ignore paint/layout/widget lifecycle events before walking the widget tree.
+        if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress,
+                                QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
+                                QEvent.Type.Wheel):
+            return super().eventFilter(obj, event)
+        if hasattr(self, 'image'):
+            inside = (self.isVisible() and isinstance(obj, QWidget)
+                      and obj.window() == self.window() and (obj is self or self.isAncestorOf(obj)))
+            if (inside and event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Z
+                    and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                    and self.sam_points):
+                self.sam_frame_token += 1  # Ignore any in-flight preview after undo.
+                self.clear_sam()
+                self.status.setText('SAM preview undone.')
+                return True
+            if inside and self.sam_busy and event.type() in (
+                    QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress,
+                    QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
+                    QEvent.Type.Wheel):
+                return True
+            if inside and event.type() == QEvent.Type.KeyPress:
+                if (event.key() == Qt.Key.Key_A
+                        and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                        and not isinstance(obj, (QLineEdit, QComboBox))
+                        and not isinstance(QApplication.focusWidget(), (QLineEdit, QComboBox))):
+                    if not event.isAutoRepeat():
+                        self.sam_checkbox.toggle()
+                    return True
+                if self.sam_points:
+                    if event.key() == Qt.Key.Key_Escape:
+                        if not self.suggestion_worker:
+                            self.clear_sam()
+                        return True
+                    if obj is self.sam_class:
+                        # Consume Enter before saving hides this field and changes focus;
+                        # otherwise the same event can also confirm the whole frame.
+                        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                            if not event.isAutoRepeat():
+                                self.finish_sam()
+                            return True
+                        return super().eventFilter(obj, event)
+                    if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                        self.sam_class.setFocus()
+                        return True
+                    if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Z):
+                        return True
         if (event.type() == QEvent.Type.KeyPress and self.isVisible()
                 and isinstance(obj, QWidget) and obj.window() == self.window()
                 and (obj is self or self.isAncestorOf(obj))
@@ -1383,9 +1527,93 @@ class ReviewPage(QWidget):
         self.frame_interval = value
         return True
 
+    def toggle_sam(self, enabled):
+        self.image.sam_enabled = enabled
+        if not enabled:
+            self.sam_frame_token += 1
+            self.clear_sam()
+
+    def clear_sam(self, render=True):
+        self.sam_points = []
+        self.sam_labels = []
+        self.sam_mask = None
+        self.image.sam_active = False
+        self.sam_panel.hide()
+        self.sam_class.clear()
+        if render:
+            self.render()
+
+    def sam_click(self, x, y, include):
+        self.pause_playback()
+        if self.raw is None or self.worker or self.suggestion_worker:
+            return
+        if not include and not self.sam_points:
+            self.status.setText('Start SAM with a left-click inside the fish.')
+            return
+        h, w = self.raw.shape[:2]
+        self.sam_points.append((min(w-1, max(0, x*w)), min(h-1, max(0, y*h))))
+        self.sam_labels.append(int(include))
+        self.sam_mask = None
+        self.image.sam_active = True
+        self.sam_panel.show()
+        if len(self.sam_points) == 1:
+            completer = QCompleter(self.names, self.sam_class)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.popup().setObjectName("samClassSuggestions")
+            self.sam_class.setCompleter(completer)
+        self.render()
+        from sam_assist import SAMWorker
+        token = self.sam_frame_token
+        worker = SAMWorker(self.sam_session, self.raw, token,
+                           self.sam_points, self.sam_labels, self)
+        self.suggestion_worker = worker
+        worker.succeeded.connect(lambda mask: self.apply_sam_mask(mask, token))
+        worker.failed.connect(lambda error: self.status.setText(f'SAM failed: {error}'))
+        worker.finished.connect(self.sam_finished)
+        self.status.setText('SAM is computing the mask. First click loads the model; CPU processing may take a while…')
+        self.sam_busy = True
+        worker.start()
+
+    def apply_sam_mask(self, mask, token):
+        if token != self.sam_frame_token or self.raw is None or mask.shape != self.raw.shape[:2]:
+            return
+        self.sam_mask = mask
+        self.render()
+        self.status.setText('SAM preview ready. Left-click includes, right-click excludes. '
+                            'Type a class in the SAM field and press Enter to create the box. ' + self.sam_session.device_description)
+        if not mask.any():
+            self.status.setText('SAM selected no pixels. Add an include point, or cancel and try again.')
+
+    def sam_finished(self):
+        self.suggestion_worker.deleteLater()
+        self.suggestion_worker = None
+        self.sam_busy = False
+
+    def finish_sam(self):
+        if self.suggestion_worker or self.sam_mask is None:
+            return
+        species = self.sam_class.text().strip()
+        if not species:
+            self.status.setText('Enter a class name before creating the SAM bounding box.')
+            self.sam_class.setFocus()
+            return
+        from sam_assist import mask_box
+        try:
+            box = mask_box(self.sam_mask)
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        self.clear_sam(render=False)
+        index = self.add_pending_box(box, species)
+        before_ids = {row.get('annotation_id') for row in self.rows}
+        self.commit_box(index)
+        added = [dict(row) for row in self.rows if row.get('annotation_id') not in before_ids]
+        if added:
+            self.deletion_undo.append(dict(frame=self.frame_number, sam_added=added[0]))
+
     def choose_assist_model(self):
         self.pause_playback()
-        weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth)')
+        weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth *.weights)')
         if weights:
             self.assist_weights = weights
             self.assist_button.setToolTip(f'Suggest boxes on this frame using {Path(weights).name}. Saved boxes are preserved.')
@@ -1404,7 +1632,7 @@ class ReviewPage(QWidget):
             QMessageBox.warning(self, 'Cannot check annotations', str(exc)); return
         weights = self.assist_weights
         if not weights:
-            weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth)')
+            weights, _ = QFileDialog.getOpenFileName(self, 'Choose model for suggestions', '', 'Model weights (*.pt *.pth *.weights)')
         if not weights: return
         self.assist_weights = weights
         from annotation_assist import SuggestionWorker
@@ -1501,6 +1729,12 @@ class ReviewPage(QWidget):
 
     def leave_to(self, callback):
         self.pause_playback()
+        if self.sam_points and not self.suggestion_worker:
+            if QMessageBox.question(self, 'Unfinished SAM annotation',
+                    'Discard the SAM preview and leave?') != QMessageBox.StandardButton.Yes:
+                return False
+            self.clear_sam()
+
         if self.worker or self.suggestion_worker or not self.save_frame(complete=False):
             return False
         if self.root and not self.manual_session and results_need_refresh(self.root):
@@ -1514,7 +1748,11 @@ class ReviewPage(QWidget):
     def save_frame(self, complete):
         """Save annotations independently of frame completion or navigation."""
         self.pause_playback()
-        if self.worker:return False
+        if self.worker or self.suggestion_worker:return False
+        if self.sam_points:
+            self.sam_class.setFocus()
+            self.status.setText('Enter a class and create the SAM box, or cancel SAM before confirming the frame.')
+            return False
         if self.raw is None:return True
         drafts=self.drafts();pending=self.pending_rows()
         if not complete:

@@ -54,7 +54,12 @@ class PipelineWorker(QThread):
     def run(self) -> None:
         try:
             self.log.emit("Checking inference device...")
-            self.config.device, description = select_device(self.config.device)
+            if self.config.weights_path.suffix.lower() == '.weights':
+                if self.config.device not in (None, 'auto', 'cpu'):
+                    raise ValueError('Darknet inference supports CPU only.')
+                self.config.device, description = 'cpu', 'CPU — Darknet uses OpenCV DNN'
+            else:
+                self.config.device, description = select_device(self.config.device)
             self.device.emit(description)
             self.log.emit(f"Inference device: {description}")
 

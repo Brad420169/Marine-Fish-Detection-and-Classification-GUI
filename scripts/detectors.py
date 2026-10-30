@@ -7,6 +7,8 @@ RF-DETR (.pth) model through one interface: load once, then call
 ``DetectionFrame`` (species names, confidences, boxes, track ids, and
 an annotated BGR frame ready to write to video).
 
+Darknet YOLO (.weights + .cfg) also uses ByteTrack and runs on CPU.
+
 Model type is auto-detected from the weights file extension:
     .pt   -> Ultralytics YOLO (tracking is built in: BoT-SORT)
     .pth  -> RF-DETR (no built-in tracker, so we attach ByteTrack
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import zipfile
 
 import cv2
 import numpy as np
@@ -163,8 +167,92 @@ class RFDETRDetector(BaseDetector):
         )
 
 
+class DarknetDetector(BaseDetector):
+    """Darknet YOLO weights with a same-stem .cfg and optional .names file."""
+    kind = "darknet"
+
+    def __init__(self, weights_path: Path, device: str | None) -> None:
+        import supervision as sv
+
+        config = weights_path.with_suffix('.cfg')
+        if not config.is_file():
+            raise ValueError(f'Missing Darknet configuration: {config.name}. '
+                             'Place the matching .cfg beside the .weights file with the same name.')
+        # Darknet configs repeat section names, so ConfigParser cannot read them.
+        section = ''
+        dimensions = {}
+        classes = set()
+        for raw in config.read_text(encoding='utf-8-sig').splitlines():
+            line = raw.split('#', 1)[0].split(';', 1)[0].strip()
+            if line.startswith('['):
+                section = line.lower()
+            elif '=' in line:
+                key, value = (part.strip() for part in line.split('=', 1))
+                if section in ('[net]', '[network]') and key in ('width', 'height', 'channels'):
+                    dimensions[key] = int(value)
+                elif section == '[yolo]' and key == 'classes':
+                    classes.add(int(value))
+        if (len(classes) != 1 or min(classes) < 1 or dimensions.get('channels') != 3
+                or min(dimensions.get('width', 0), dimensions.get('height', 0)) < 1):
+            raise ValueError('Expected a Darknet YOLO configuration with RGB input and consistent class counts.')
+        count = classes.pop()
+        names_path = weights_path.with_suffix('.names')
+        self.class_names_missing = not names_path.is_file()
+        self.class_names = ([line.strip() for line in names_path.read_text(encoding='utf-8-sig').splitlines()
+                             if line.strip()] if names_path.is_file()
+                            else [f'class_{i}' for i in range(count)])
+        if len(self.class_names) != count:
+            raise ValueError(f'{names_path.name} must contain {count} class names, one per line.')
+        if device not in (None, 'auto', 'cpu'):
+            raise ValueError('Darknet inference currently supports CPU only. Select CPU or automatic device selection.')
+        network = cv2.dnn.readNetFromDarknet(str(config), str(weights_path))
+        self.model = cv2.dnn_DetectionModel(network)
+        self.model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self.model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        self.model.setInputParams(size=(dimensions['width'], dimensions['height']),
+                                  scale=1 / 255.0, swapRB=True, crop=False)
+        self.model.setNmsAcrossClasses(False)
+        self.tracker = sv.ByteTrack()
+        self.box_annotator = sv.BoxAnnotator()
+        self.label_annotator = sv.LabelAnnotator()
+
+    def infer(self, frame_bgr: np.ndarray, conf: float, iou: float) -> DetectionFrame:
+        import supervision as sv
+
+        ids, scores, boxes = self.model.detect(frame_bgr, confThreshold=conf, nmsThreshold=iou)
+        xyxy = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
+        xyxy[:, 2:] += xyxy[:, :2]
+        height, width = frame_bgr.shape[:2]
+        xyxy[:, [0, 2]] = np.clip(xyxy[:, [0, 2]], 0, width)
+        xyxy[:, [1, 3]] = np.clip(xyxy[:, [1, 3]], 0, height)
+        valid = (xyxy[:, 2] > xyxy[:, 0]) & (xyxy[:, 3] > xyxy[:, 1])
+        detections = sv.Detections(
+            xyxy=xyxy[valid], confidence=np.asarray(scores, dtype=np.float32).reshape(-1)[valid],
+            class_id=np.asarray(ids, dtype=int).reshape(-1)[valid])
+        # Update on empty frames too, so lost tracks age out correctly.
+        detections = self.tracker.update_with_detections(detections)
+        species = [self.class_names[int(i)] for i in detections.class_id]
+        labels = [f'{name} {score:.2f}' for name, score in zip(species, detections.confidence)]
+        annotated = frame_bgr.copy()
+        if len(detections):
+            annotated = self.box_annotator.annotate(annotated, detections)
+            annotated = self.label_annotator.annotate(annotated, detections, labels=labels)
+        return DetectionFrame(annotated=annotated, species=species,
+                              confidences=detections.confidence.tolist(), xyxy=detections.xyxy.tolist(),
+                              track_ids=detections.tracker_id.tolist() if detections.tracker_id is not None
+                              else [None] * len(species))
+
+
 # Factory
 def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
+    weights_path = Path(weights_path)
+    if weights_path.suffix.lower() == '.weights':
+        return DarknetDetector(weights_path, device=device)
+    if weights_path.suffix.lower() == '.pt' and zipfile.is_zipfile(weights_path):
+        with zipfile.ZipFile(weights_path) as archive:
+            if any(name.lower().endswith('.weights') for name in archive.namelist()):
+                raise ValueError('This .pt file is a ZIP bundle containing Darknet weights, not a PyTorch model. '
+                                 'Extract its .weights and .cfg files with matching names, then select the .weights file.')
     if device is None or device == "auto":
         from inference_device import select_device
         device, _ = select_device(device)
@@ -175,5 +263,5 @@ def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
         return RFDETRDetector(weights_path, device=device)
     raise ValueError(
         f"Unrecognised weights file type '{suffix}' for {weights_path.name} "
-        "(expected .pt for YOLO or .pth for RF-DETR)."
+        "(expected .pt for YOLO, .pth for RF-DETR, or .weights with a matching .cfg for Darknet)."
     )

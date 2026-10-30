@@ -6,11 +6,13 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 
 [tasks]
 GUI = "python scripts/app.py"
+setup-sam = "python scripts/sam_assist.py"
 
 [dependencies]
 python = "3.11.*"
 pyqt6 = "*"
-opencv = "*"
+# OpenCV 5 removed the Darknet importer used by .weights models.
+opencv = ">=4.10,<5"
 pandas = "*"
 numpy = "*"
 pip = "*"

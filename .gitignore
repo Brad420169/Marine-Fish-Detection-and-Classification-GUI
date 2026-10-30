@@ -3,9 +3,11 @@ __pycache__/
 *.pyc
 projects/
 
-# Keep local tests out of Git, except installer regression checks.
+# Keep local tests out of Git, except committed regression checks.
 /tests/*
 !/tests/test_installation.py
+!/tests/test_darknet.py
+!/tests/test_sam_assist.py
 /Tests/
 
 

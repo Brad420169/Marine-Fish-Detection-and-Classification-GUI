@@ -15,6 +15,9 @@ QGroupBox::title { subcontrol-origin: padding; subcontrol-position: top left; to
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { min-height: 30px; background: #153e58; border: 1px solid #537e98; border-radius: 6px; padding: 2px 8px; color: #f2f9ff; selection-background-color: #087eb9; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #27c6f7; }
 QComboBox::drop-down { border: none; width: 22px; }
+QAbstractItemView#samClassSuggestions { background: #0a3049; color: #effaff; border: 1px solid #267aa0; selection-background-color: #0079bd; selection-color: #ffffff; }
+QAbstractItemView#samClassSuggestions::item { padding: 5px 8px; }
+QAbstractItemView#samClassSuggestions::item:selected { background: #0079bd; color: #ffffff; }
 QComboBox QAbstractItemView { background: #0a3049; color: #effaff; selection-background-color: #0079bd; selection-color: white; }
 QPushButton { min-height: 30px; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #143e58,stop:1 #092a41); color: #effaff; border: 1px solid #267aa0; border-radius: 7px; padding: 5px 14px; }
 QPushButton:hover { background: #155376; border-color: #35cfff; }

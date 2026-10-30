@@ -374,6 +374,10 @@ def run_pipeline(
 
     if detector.kind == "yolo":
         log("Model type: YOLO  |  Tracker: botsort (default)")
+    elif detector.kind == "darknet":
+        log("Model type: Darknet YOLO  |  Device: CPU (OpenCV DNN)  |  Tracker: ByteTrack")
+        if detector.class_names_missing:
+            log("WARNING: no matching .names file; labels will be class_0, class_1, etc.")
     else:
         log("Model type: RF-DETR  |  Tracker: ByteTrack")
         if getattr(detector, "class_names_missing", False):

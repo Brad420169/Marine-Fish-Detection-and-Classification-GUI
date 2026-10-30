@@ -282,7 +282,7 @@ class WeightsRow(QWidget):
 
         self.upload_btn = QPushButton("Add model weights…")
         self.upload_btn.setIcon(icon("plus"))
-        self.upload_btn.setToolTip("Copy a .pt (YOLO) or .pth (RF-DETR) file into the models folder")
+        self.upload_btn.setToolTip("Copy .pt, .pth, or Darknet .weights with matching .cfg and optional .names files")
         self.upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upload_btn.clicked.connect(self._upload_weights)
         row2.addWidget(self.upload_btn, 1)
@@ -300,10 +300,10 @@ class WeightsRow(QWidget):
 
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
-        models = sorted(set([*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth"),
+        models = sorted(set([*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth"), *self.models_dir.glob("*.weights"),
                              *(path for path in self.project_models if path.is_file())]))
         if not models:
-            self.combo.addItem("No .pt/.pth files found in models/")
+            self.combo.addItem("No .pt/.pth/.weights files found in models/")
             self.combo.setEnabled(False)
             return
 
@@ -323,26 +323,42 @@ class WeightsRow(QWidget):
             self,
             "Select Model Weights",
             str(self.models_dir),
-            "Model Weights (*.pt *.pth);;YOLO Weights (*.pt);;RF-DETR Weights (*.pth)",
+            "Model Weights (*.pt *.pth *.weights);;YOLO Weights (*.pt);;RF-DETR Weights (*.pth);;Darknet Weights (*.weights)",
         )
         if not path:
             return
 
         src = Path(path)
-        dest = self.models_dir / src.name
-
-        if dest.exists():
-            answer = QMessageBox.question(
-                self,
-                "File already exists",
-                f"{src.name} already exists in the models folder.\nOverwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
+        sources = [src]
+        if src.suffix.lower() == '.weights':
+            config = src.with_suffix('.cfg')
+            if not config.is_file():
+                QMessageBox.warning(self, 'Configuration missing',
+                                    f'Place {config.name} beside the weights file, then try again.')
+                return
+            sources.append(config)
+            names = src.with_suffix('.names')
+            if names.is_file():
+                sources.append(names)
+        copies = [(source, self.models_dir / source.name) for source in sources
+                  if source.resolve() != (self.models_dir / source.name).resolve()]
+        existing = [dest.name for _, dest in copies if dest.exists()]
+        # Do not silently retain labels from a different model with the same name.
+        stale_names = self.models_dir / src.with_suffix('.names').name
+        remove_names = src.suffix.lower() == '.weights' and len(sources) == 2 and bool(copies) and stale_names.exists()
+        if existing or remove_names:
+            details = 'Replace existing model files: ' + ', '.join(existing)
+            if remove_names:
+                details += f'\nRemove old labels: {stale_names.name} (the imported model has none).'
+            answer = QMessageBox.question(self, 'Replace model?', details,
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
-
         try:
-            shutil.copy2(src, dest)
+            for source, dest in copies:
+                shutil.copy2(source, dest)
+            if remove_names:
+                stale_names.unlink()
         except Exception as e:
             QMessageBox.critical(self, "Copy failed", str(e))
             return
