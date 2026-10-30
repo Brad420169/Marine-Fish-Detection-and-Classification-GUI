@@ -28,6 +28,8 @@ if ! command -v pixi >/dev/null 2>&1; then
 fi
 echo 'Pixi is available.'
 INSTALL_DIR="${INSTALL_DIR:-$HOME/MarineApps}"
+# Resolve relative destinations before changing into the cloned repository.
+[[ "$INSTALL_DIR" = /* ]] || INSTALL_DIR="$PWD/$INSTALL_DIR"
 PROJECT_DIR="$INSTALL_DIR/Marine-Fish-Detection-and-Classification-GUI"
 if [[ -e "$PROJECT_DIR" || -L "$PROJECT_DIR" ]]; then
     echo "Destination already exists: $PROJECT_DIR. Choose another INSTALL_DIR or use the existing installation." >&2
@@ -56,6 +58,53 @@ echo "$STEP..."
 git lfs install --local
 git lfs pull
 echo 'Git LFS model download complete.'
+STEP='Downloading Community Fish Detector'
+echo "$STEP..."
+(
+mkdir -p "$PROJECT_DIR/models"
+cd -- "$PROJECT_DIR/models"
+url="https://github.com/filippovarini/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt"
+expected="0b259afb3dca1d1d7f9d842ebf136884b2e3706b151172b266bb24e07f2b8e98"
+target="Fish_Only_YOLO12.pt"
+
+checksum() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "Install sha256sum or shasum to verify the download." >&2
+        return 1
+    fi
+}
+
+if [[ -e "$target" ]]; then
+    if [[ "$(checksum "$target")" == "$expected" ]]; then
+        echo "$target is already installed and verified."
+        exit 0
+    fi
+    echo "$target already exists with a different checksum; move it aside before retrying." >&2
+    exit 1
+fi
+
+temp=$(mktemp "./.fish-download.XXXXXX")
+trap 'rm -f -- "$temp"' EXIT
+if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --retry 3 --output "$temp" "$url"
+elif command -v wget >/dev/null 2>&1; then
+    wget --tries=3 --output-document="$temp" "$url"
+else
+    echo "Install curl or wget, then rerun this script." >&2
+    exit 1
+fi
+if [[ "$(checksum "$temp")" != "$expected" ]]; then
+    echo "Checksum mismatch; downloaded file discarded. Please retry." >&2
+    exit 1
+fi
+# A hard link publishes the complete file without overwriting an existing model.
+ln -- "$temp" "$target"
+echo "Installed $PWD/$target"
+)
 STEP='Installing Pixi environment'
 echo "$STEP (approximately 8.3 GB installed on Linux; macOS size varies). Please stand by..."
 echo 'Allow at least 15 GB free disk space including download caches. Downloads may take several minutes.'

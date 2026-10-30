@@ -82,7 +82,7 @@ https://github.com/user-attachments/assets/dadffcb2-fd3d-4065-80d7-ab51183c1109
 
 Choose your platform: [<img src="assets/platforms/windows.svg" width="22" alt=""> **Windows**](#windows) · [<img src="assets/platforms/linux.svg" width="22" alt=""> **Linux**](#linux-and-macos) · [<img src="assets/platforms/macos.svg" width="22" alt=""> **macOS**](#linux-and-macos)
 
-Install Pixi once, then download and run the installer for your platform. It installs Git and Git LFS, downloads the app into `~/MarineApps/Marine-Fish-Detection-and-Classification-GUI`, installs its dependencies, and creates the desktop icon. Existing installation folders are left untouched; choose a different directory if one already exists.
+Install Pixi once, then download and run the installer for your platform. It installs Git and Git LFS, downloads the app into `~/MarineApps/Marine-Fish-Detection-and-Classification-GUI`, downloads the fish-only model into the app’s `models/` folder, installs its dependencies, and creates the desktop icon. Existing installation folders are left untouched; choose a different directory if one already exists.
 
 <a id="windows"></a>
 ### <img src="assets/platforms/windows.svg" width="28" alt=""> Windows
@@ -96,11 +96,11 @@ powershell -ExecutionPolicy Bypass -Command "irm -useb https://pixi.sh/install.p
 **2. Close and reopen PowerShell, then download and run the installer:**
 
 ```powershell
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/installation.ps1' -OutFile installation.ps1
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/setup/installation.ps1' -OutFile installation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\installation.ps1
 ```
 
-For a different installation directory, use `powershell -NoProfile -ExecutionPolicy Bypass -File .\installation.ps1 -InstallDir 'D:\MarineApps'` instead of the last command. You can also download [installation.ps1](installation.ps1) manually and run it from the folder where you saved it.
+For a different installation directory, use `powershell -NoProfile -ExecutionPolicy Bypass -File .\installation.ps1 -InstallDir 'D:\MarineApps'` instead of the last command. You can also download [installation.ps1](setup/installation.ps1) manually and run it from the folder where you saved it.
 
 The installer creates shortcuts on your actual Desktop (including a redirected OneDrive Desktop) and in the Start menu. Execution-policy bypass applies only to that PowerShell process.
 
@@ -119,10 +119,10 @@ curl -fsSL https://pixi.sh/install.sh | bash
 **2. Close and reopen Terminal, then download and run the installer:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/installation.sh -o installation.sh && bash installation.sh
+curl -fsSL https://raw.githubusercontent.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI/main/setup/installation.sh -o installation.sh && bash installation.sh
 ```
 
-If you download [installation.sh](installation.sh) manually, open Terminal in the folder where you saved it and run:
+If you download [installation.sh](setup/installation.sh) manually, open Terminal in the folder where you saved it and run:
 
 ```bash
 bash installation.sh
@@ -143,6 +143,18 @@ pixi run --locked GUI
 ```
 
 This keeps errors visible in Terminal. Create a project, load a short video, run each model type you use (YOLO `.pt` and/or RF-DETR `.pth`), review detections, and open results and output files. Separately test YOLO training if needed, then close the app and test the desktop launcher. CPU detection can be slow.
+
+### Included fish-only model download
+
+Both installation scripts ([Linux/macOS](setup/installation.sh), [Windows](setup/installation.ps1)) automatically download Community Fish Detector into the installed application's `models/Fish_Only_YOLO12.pt` folder location, regardless of where you run the installer. The approximately 119 MB download is checked against the upstream release's SHA-256 checksum. Existing model files are preserved; a different checksum stops installation with an error.
+
+**Model citation:**
+
+> Varini, F., Morris, D., Burniston, S., Boulais, O., Barnard, K., et al. (2026). *Community Fish Detector*. GitHub. https://github.com/filippovarini/community-fish-detector
+
+[Original model release](https://github.com/filippovarini/community-fish-detector/releases/tag/cfd-1.00-yolov12x). The downloaded weights are unchanged, with the local filename `Fish_Only_YOLO12.pt`. Select this model in the app to detect the single class `fish`. Upstream recommends an inference image size of 1024.
+
+Linux/macOS uses curl or wget. Windows uses curl.exe or wget.exe when available, otherwise PowerShell's downloader. This third-party model is separate from the project's Kona models and MIT-licensed source code: the checkpoint declares AGPL-3.0, and upstream documents AGPL for the inference code and separate training-data licences. See the [upstream licensing notes](https://github.com/filippovarini/community-fish-detector#models).
 
 ### Launch and pin the app
 

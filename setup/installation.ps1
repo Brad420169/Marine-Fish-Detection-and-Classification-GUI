@@ -15,6 +15,7 @@ try {
         throw 'Install Pixi first, then reopen PowerShell. See the README.'
     }
     Write-Host 'Pixi is available.'
+    $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
     $ProjectDir = Join-Path $InstallDir 'Marine-Fish-Detection-and-Classification-GUI'
     if (Test-Path -LiteralPath $ProjectDir) {
         throw "Destination already exists: $ProjectDir. Choose another -InstallDir or use the existing installation."
@@ -59,6 +60,46 @@ try {
         & git lfs pull
         if ($LASTEXITCODE -ne 0) { throw 'Git LFS download failed.' }
         Write-Host 'Git LFS model download complete.'
+        $Step = 'Downloading Community Fish Detector'
+        Write-Host "$Step..."
+        function Install-FishModel {
+            $ModelDir = Join-Path $ProjectDir 'models'
+            New-Item -ItemType Directory -Force -Path $ModelDir | Out-Null
+            $url = 'https://github.com/filippovarini/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt'
+            $expected = '0b259afb3dca1d1d7f9d842ebf136884b2e3706b151172b266bb24e07f2b8e98'
+            $target = Join-Path $ModelDir 'Fish_Only_YOLO12.pt'
+
+            if (Test-Path -LiteralPath $target) {
+                if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq $expected) {
+                    Write-Host 'Fish_Only_YOLO12.pt is already installed and verified.'
+                    return
+                }
+                throw "$target already exists with a different checksum; move it aside before retrying."
+            }
+
+            $temp = Join-Path $ModelDir ('.fish-download.' + [guid]::NewGuid().ToString('N'))
+            try {
+                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                    & curl.exe --fail --location --retry 3 --output $temp $url
+                    if ($LASTEXITCODE -ne 0) { throw "curl failed with exit code $LASTEXITCODE" }
+                } elseif (Get-Command wget.exe -ErrorAction SilentlyContinue) {
+                    & wget.exe --tries=3 "--output-document=$temp" $url
+                    if ($LASTEXITCODE -ne 0) { throw "wget failed with exit code $LASTEXITCODE" }
+                } else {
+                    # Older Windows versions may not include curl.exe.
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+                    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $temp
+                }
+                if ((Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash -ne $expected) {
+                    throw 'Checksum mismatch; downloaded file discarded. Please retry.'
+                }
+                [System.IO.File]::Move($temp, $target)
+                Write-Host "Installed $target"
+            } finally {
+                if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+            }
+        }
+        Install-FishModel
         $Step = 'Installing Pixi environment'
         Write-Host "$Step (Linux reference size: approximately 8.3 GB installed; Windows size varies). Please stand by..."
         Write-Host 'Allow at least 15 GB free disk space including download caches. Downloads may take several minutes.'
