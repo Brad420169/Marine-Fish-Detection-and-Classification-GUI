@@ -364,9 +364,6 @@ class ResultsPage(QWidget):
         self.open_summary_btn.setEnabled(
             "summary_csv" in outputs and outputs["summary_csv"].exists()
         )
-        # self.open_flagged_btn.setEnabled(
-        #     "flagged_csv" in outputs and outputs["flagged_csv"].exists()
-        # )
         self.open_folder_btn.setEnabled(output_dir.exists())
 
         # Show the saved top Max-N example frames, if available.

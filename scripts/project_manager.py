@@ -6,7 +6,6 @@ Handles project creation, loading, and run tracking.
 from __future__ import annotations
 
 import json
-import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path

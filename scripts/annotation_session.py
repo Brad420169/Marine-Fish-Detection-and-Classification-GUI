@@ -1,4 +1,4 @@
-"""Create annotation sources using the editor's existing durable storage format."""
+"""Create manual annotation sessions (a run folder with no detections yet)."""
 import json
 import math
 from pathlib import Path
@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import cv2
 
-from review_io import REVIEW_COLUMNS, save_rows
+from review_io import REVIEW_COLUMNS
+from review_store import ReviewStore
 
 
 def create_session(project, video, interval=1, target_fps=None, cancelled=lambda: False):
@@ -44,7 +45,7 @@ def create_session(project, video, interval=1, target_fps=None, cancelled=lambda
         (root / 'species_names.json').write_text('[]', encoding='utf-8')
         fields = ['frame_number', 'timestamp', 'species', 'confidence', 'track_id',
                   'x1', 'y1', 'x2', 'y2', 'reviewed', 'notes', 'frame_image'] + REVIEW_COLUMNS
-        save_rows(root / 'low_confidence_review.csv', [], fields)
+        ReviewStore.create(root, [], fields).close()
         if cancelled():
             raise InterruptedError('Video preparation cancelled.')
         project.add_item('annotation', video_name, root)

@@ -47,7 +47,6 @@ class ImageLabel(QLabel):
         self.on_zoom = None
         self.on_interact = None
         self.on_resize_start = None
-        self.on_view_changed = None
         self.on_drag_start = None
         self.on_drag_move = None
         self.on_drag_end = None
@@ -86,8 +85,6 @@ class ImageLabel(QLabel):
         if view.size:
             self.setPixmap(pixmap(view).scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatio,
                                                Qt.TransformationMode.SmoothTransformation))
-
-        if self.on_view_changed: self.on_view_changed()
 
     def ready(self):
         return self.frame is not None and bool(self.pixmap() and self.pixmap().width())

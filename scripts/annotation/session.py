@@ -1,4 +1,4 @@
-"""The data behind the annotation page: review CSV rows, run metadata and frame completion.
+"""The data behind the annotation page: review rows, run metadata and frame completion.
 
 No Qt here, so this can be used and tested without a window.
 """
@@ -9,16 +9,16 @@ from pathlib import Path
 
 import cv2
 
-from model_evaluation import confirm_review_frame
 from pipeline import format_timestamp
-from review_io import context_for, load_review_rows, load_species_names, save_rows
+from review_io import context_for, load_species_names
+from review_store import ReviewStore
 
 
 class ReviewSession:
     """One opened detection run or manual annotation session."""
 
     def __init__(self):
-        self.path = None          # low_confidence_review.csv
+        self.store = None         # the run's review database (review_store.py)
         self.root = None          # run / session folder
         self.video = None         # annotated output video, if any
         self.source_video = None  # raw video to read frames from
@@ -30,71 +30,72 @@ class ReviewSession:
         self.manual_session = False
         self.frame_interval = 1
         self.fps = 25.0
-        self._completion_cache = None
 
     # Loading
 
-    def open(self, flagged_csv, output_dir, video_path):
+    def open(self, output_dir, video_path):
         """Read run metadata. Rows are loaded separately by load_rows()."""
-        self.path = Path(flagged_csv) if flagged_csv else None
+        self.close()
         self.root = Path(output_dir) if output_dir else None
-        self.video = Path(video_path) if video_path else None
+        self.video = self.source_video = Path(video_path) if video_path else None
         self.rows, self.fields, self.names = [], [], []
         self.detections_by_frame = {}
         self.fps = 25.0
-        self._completion_cache = None
-        metadata = self.root / 'original_detections.json' if self.root else None
-        source = json.loads(metadata.read_text(encoding='utf-8')) if metadata and metadata.is_file() else {}
+        source = self._read_json('original_detections.json')
+        view = self._read_json('annotation_view.json')
         self.manual_session = source.get('kind') == 'annotation'
-        preferences = self.root / 'annotation_view.json' if self.root else None
-        view = json.loads(preferences.read_text()) if preferences and preferences.is_file() else {}
         self.frame_interval = max(1, int(view.get('frame_interval', source.get('frame_interval', 1))))
-        self._read_detections()
+        fps = float(source.get('fps') or self.fps)
+        if math.isfinite(fps) and fps > 0:
+            self.fps = fps
+        self.detections_by_frame = {f['frame_number']: f['detections'] for f in source.get('frames', [])}
+        candidate = Path(source.get('source_video', ''))
+        if source.get('source_video') and candidate.is_file():
+            self.source_video = candidate
+
+    def _read_json(self, name):
+        """A metadata file in the run folder, or {} when missing or unreadable."""
+        path = self.root / name if self.root else None
+        if not (path and path.is_file()):
+            return {}
+        try:
+            return json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return {}
+
+    def close(self):
+        if self.store:
+            self.store.close()
+        self.store = None
 
     def load_rows(self):
-        """Load the review CSV and species list. Raises OSError, ValueError or KeyError."""
-        if not self.path or not self.root:
-            raise ValueError('No review CSV is available.')
-        self.rows, self.fields = load_review_rows(self.path)
+        """Load the saved reviews and species list. Raises OSError, ValueError or KeyError.
+
+        Opening an older run migrates its review CSV into review.sqlite first.
+        """
+        if not self.root:
+            raise ValueError('No run folder is open.')
+        self.store = ReviewStore(self.root)
+        self.rows, self.fields = self.store.load(), self.store.fields
         self.names = load_species_names(self.root, self.rows)
         return (self.root / 'species_names.json').exists()
 
-    def _read_detections(self):
-        """Detector output, frame rate and raw source video from original_detections.json."""
-        self.source_video = self.video
-        original = self.root / 'original_detections.json' if self.root else None
-        if not (original and original.exists()):
-            return
-        try:
-            data = json.loads(original.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            return
-        fps = float(data.get('fps') or self.fps)
-        if math.isfinite(fps) and fps > 0:
-            self.fps = fps
-        self.detections_by_frame = {f['frame_number']: f['detections'] for f in data.get('frames', [])}
-        candidate = Path(data.get('source_video', ''))
-        if candidate.is_file():
-            self.source_video = candidate
-
     def start_frame(self, total_frames, has_video):
-        """Where to open: the first unfinished sampled frame, or a pending track box."""
-        number = next((n for n in self.flagged_frames
-                       if any(r['review_status'] not in ('confirmed', 'rejected')
-                              for r in self.rows if r['frame_number'] == n)),
-                      self.flagged_frames[0] if self.flagged_frames else 1)
+        """Where to open: the first unfinished frame, or a pending track box."""
         if has_video:
-            number = 1
-        elif self.rows_by_frame and not self.flagged_frames:
-            number = min(self.rows_by_frame)
-        if self.manual_session and has_video:
+            if not self.manual_session:
+                return 1
             completed = set(self.completed_frames())
             pending_track_frames = {r['frame_number'] for r in self.rows
                                     if r.get('manual_track_id') and r['review_status'] == 'pending'}
             sampled = range(1, total_frames + 1, self.frame_interval)
             next_sample = next((n for n in sampled if n not in completed), total_frames)
-            number = min(pending_track_frames | {next_sample})
-        return number
+            return min(pending_track_frames | {next_sample})
+        if self.flagged_frames:
+            return next((n for n in self.flagged_frames
+                         if any(r['review_status'] not in ('confirmed', 'rejected') for r in self.frame_rows(n))),
+                        self.flagged_frames[0])
+        return min(self.rows_by_frame, default=1)
 
     # Rows
 
@@ -108,15 +109,17 @@ class ReviewSession:
         self.review_complete_count = sum(all(r['review_status'] in ('confirmed', 'rejected')
                                              for r in self.rows_by_frame[n]) for n in self.flagged_frames)
 
-    def replace(self, rows):
-        """Adopt rows that are already saved."""
+    def save(self, rows, complete=None):
+        """Save rows, then adopt them. Raises OSError on failure.
+
+        With ``complete`` (a frame number), that frame is recorded as fully reviewed
+        in the same transaction.
+        """
+        if not self.store:
+            raise OSError('No saved reviews are open for this run.')
+        self.store.save(rows, complete)
         self.rows = rows
         self.index()
-
-    def save(self, rows):
-        """Write rows to the CSV, then adopt them. Raises OSError on failure."""
-        save_rows(self.path, rows, self.fields)
-        self.replace(rows)
 
     def frame_rows(self, number):
         return self.rows_by_frame.get(number, [])
@@ -144,25 +147,12 @@ class ReviewSession:
     # Completion and files
 
     def completed_frames(self):
-        """Frames whose full review is recorded and still matches the CSV (cached)."""
-        # File metadata invalidates the cache after saves or external edits.
-        signature = [str(self.root.resolve())]
-        for name in ('original_detections.json', 'low_confidence_review.csv', 'review_completion.json'):
-            path = self.root / name
-            try:
-                stat = path.stat()
-                signature.append((stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
-            except FileNotFoundError:
-                signature.append(None)
-        if self._completion_cache is None or self._completion_cache[0] != signature:
-            from yolo_export import reviewed_frames
-            completed = frozenset(reviewed_frames(self.root)[2])
-            self._completion_cache = (signature, completed)
-        return self._completion_cache[1]
+        """Frames whose full review is recorded and still matches the saved boxes."""
+        return self.store.completed_frames() if self.store else []
 
     def record_completion(self, number):
-        """Record a full-frame review. Raises OSError, ValueError or KeyError."""
-        confirm_review_frame(self.root, self.rows, number)
+        """Record a full-frame review of saved rows. Raises OSError."""
+        self.store.record_completion(number, self.frame_rows(number))
 
     def save_interval(self, value):
         """Remember the frame interval for this session. Raises OSError."""

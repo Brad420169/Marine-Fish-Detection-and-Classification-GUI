@@ -8,7 +8,7 @@ from PyQt6.QtCore import QProcess, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
-                             QScrollArea, QSlider, QVBoxLayout, QWidget)
+                             QScrollArea, QVBoxLayout, QWidget)
 
 from paths import ROOT_DIR
 from widgets import settings_slider
@@ -164,7 +164,7 @@ class TrainingPage(QWidget):
         self.log.setPlaceholderText('Training progress appears here.'); train_layout.addWidget(self.log)
         self.reuse_buttons = []
         reuse = QHBoxLayout()
-        for label, target in [('Use for detection', 'detection'), ('Assist annotation', 'review')]:
+        for label, target in [('Use for detection', 'detection')]:
             button = QPushButton(label)
             button.setEnabled(False)
             button.clicked.connect(lambda checked=False, dest=target: self.model_ready.emit(str(self.best_weights), dest))

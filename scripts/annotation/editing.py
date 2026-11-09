@@ -26,6 +26,21 @@ class BoxEditor:
         h, w = self.page.raw.shape[:2]
         return w, h
 
+    def _to_pixels(self, x1, y1, x2, y2):
+        """A box given as frame fractions, in pixels and clamped inside the frame."""
+        w, h = self._frame_size()
+        return [max(0, min(w, x1 * w)), max(0, min(h, y1 * h)), max(0, min(w, x2 * w)), max(0, min(h, y2 * h))]
+
+    def _select(self, index):
+        """Select a box by its index in page.all_rows(): saved rows first, then drawn boxes."""
+        page = self.page
+        saved = page.table.rowCount()
+        if index < saved:
+            page.edit_detection(index)
+        else:
+            page.select_annotation(index - saved)
+        page.image.setFocus()
+
     # Draw, select, move and resize
 
     def draw(self, x1, y1, x2, y2):
@@ -33,9 +48,7 @@ class BoxEditor:
         page.nav.pause()
         if page.raw is None or page.worker:
             return
-        w, h = self._frame_size()
-        box = [round(max(0, min(w, x1 * w)), 2), round(max(0, min(h, y1 * h)), 2),
-               round(max(0, min(w, x2 * w)), 2), round(max(0, min(h, y2 * h)), 2)]
+        box = [round(v, 2) for v in self._to_pixels(x1, y1, x2, y2)]
         if box[2] - box[0] < 2 or box[3] - box[1] < 2:
             return
         page.add_pending_box(box)
@@ -55,13 +68,7 @@ class BoxEditor:
             if x1 <= point[0] <= x2 and y1 <= point[1] <= y2:
                 hits.append(((x2 - x1) * (y2 - y1), i))
         if hits:
-            _, i = min(hits)
-            saved = page.table.rowCount()
-            if i < saved:
-                page.edit_detection(i)
-            else:
-                page.select_annotation(i - saved)
-                page.image.setFocus()
+            self._select(min(hits)[1])
             return
         # Confident model boxes are drawn as context even when never flagged.
         # Promote a clicked box to an editable review row; retain its model identity.
@@ -140,12 +147,7 @@ class BoxEditor:
         if not hits:
             return False
         _, index, box, edges = min(hits)
-        saved = page.table.rowCount()
-        if index < saved:
-            page.edit_detection(index)
-        else:
-            page.select_annotation(index - saved)
-        page.image.setFocus()
+        self._select(index)
         self.drag = (index, x * w, y * h, box, edges)
         return True
 
@@ -229,8 +231,7 @@ class BoxEditor:
         if page.worker or page.raw is None:
             return
         session, frame = page.session, page.frame
-        w, h = self._frame_size()
-        area = [max(0, min(w, x1 * w)), max(0, min(h, y1 * h)), max(0, min(w, x2 * w)), max(0, min(h, y2 * h))]
+        area = self._to_pixels(x1, y1, x2, y2)
         if area[2] - area[0] < 2 or area[3] - area[1] < 2:
             return
         try:

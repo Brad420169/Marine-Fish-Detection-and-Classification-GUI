@@ -75,7 +75,6 @@ def _toolbar(page):
     page.play_button = button(bar, 'Play', page.nav.toggle)
     page.play_button.setIcon(icon('play'))
     bar.addStretch()
-    button(bar, 'Frame interval', page.select_interval)
     button(bar, 'Export dataset', page.export_requested.emit)
     return bar
 

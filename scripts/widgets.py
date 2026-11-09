@@ -12,15 +12,13 @@ from ui_icons import icon, icon_text
 import shutil
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
 )
 
 from paths import ROOT_DIR
-from project_manager import Project
 
 
 class PathRow(QWidget):
@@ -439,57 +437,6 @@ class LabeledSlider(QWidget):
 
     def value(self) -> float:
         return self.value_box.value()
-
-
-class ProjectListRow(QWidget):
-    """Project list row with a delete button shown only when selected."""
-
-    def __init__(
-        self,
-        project: Project,
-        label: str,
-        on_delete,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.project = project
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 4, 2)
-        layout.setSpacing(8)
-
-        self.label = QLabel(label)
-        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self.label, 1)
-
-        self.delete_btn = QPushButton()
-        self.delete_btn.setIcon(QIcon(str(ROOT_DIR / "assets/trash.svg")))
-        self.delete_btn.setIconSize(QSize(18,18))
-        self.delete_btn.setAccessibleName(f"Delete project {project.name}")
-        self.delete_btn.setToolTip(f"Delete {project.name}")
-        self.delete_btn.setFixedSize(32, 32)
-        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_btn.setVisible(False)
-        self.delete_btn.setStyleSheet(
-            """
-            QPushButton {
-                border: none;
-                background: transparent;
-                min-width: 32px; max-width: 32px;
-                min-height: 32px; max-height: 32px;
-                padding: 0;
-            }
-            QPushButton:hover {
-                background-color: #572837;
-                border-radius: 4px;
-            }
-            """
-        )
-        self.delete_btn.clicked.connect(lambda: on_delete(project))
-        layout.addWidget(self.delete_btn, 0, Qt.AlignmentFlag.AlignVCenter)
-
-    def set_selected(self, selected: bool) -> None:
-        self.delete_btn.setVisible(selected)
 
 
 def settings_slider(self, layout, title, minimum, maximum, value, explanation):

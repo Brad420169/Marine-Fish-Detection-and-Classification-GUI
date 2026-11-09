@@ -1,6 +1,5 @@
 """Recompute aggregate results from immutable detections and saved review decisions."""
 from collections import Counter, defaultdict, deque
-import csv
 import json
 from pathlib import Path
 import shutil
@@ -10,6 +9,7 @@ import cv2
 
 from pipeline import SUMMARY_FIELDS, extract_maxn_example_frames, format_timestamp
 from review_io import save_rows, original_box, review_box, box_identity
+import review_store
 
 
 def box_key(frame, box):
@@ -111,7 +111,7 @@ def summarize(original, frames):
     return sorted(rows, key=lambda row: (-row['max_n'], -row['visible_seconds']))
 
 
-def refresh_results(root, review_csv):
+def refresh_results(root):
     root = Path(root)
     source = root / 'original_detections.json'
     if not source.exists():
@@ -119,8 +119,7 @@ def refresh_results(root, review_csv):
                          'Max-N, visibility or unique tracks after corrections. Run detection again '
                          'with this version to enable accurate Refresh Results. Existing files are unchanged.')
     original = json.loads(source.read_text(encoding='utf-8'))
-    with Path(review_csv).open(newline='', encoding='utf-8') as stream:
-        reviews = list(csv.DictReader(stream))
+    reviews, _ = review_store.load_rows(root)
     frames = merge_detections(original, reviews)
     rows = summarize(original, frames)
     # Stage every result before publishing, with rollback if replacement fails.
@@ -177,12 +176,11 @@ def refresh_results(root, review_csv):
 
 
 def results_need_refresh(root):
+    """Reviews changed since Refresh Results last wrote reviewed_detections.csv."""
     root = Path(root)
-    confirmation = root / 'review_completion.json'
     reviewed = root / 'reviewed_detections.csv'
-    sources = [path for path in (confirmation, root / 'low_confidence_review.csv') if path.is_file()]
-    return bool(sources) and (not reviewed.is_file() or
-            max(path.stat().st_mtime_ns for path in sources) > reviewed.stat().st_mtime_ns)
+    changed = review_store.modified_ns(root)
+    return changed is not None and (not reviewed.is_file() or changed > reviewed.stat().st_mtime_ns)
 
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -192,12 +190,12 @@ class RefreshWorker(QThread):
     succeeded = pyqtSignal(int, bool)
     failed = pyqtSignal(str)
 
-    def __init__(self, root, review_csv, parent=None):
+    def __init__(self, root, parent=None):
         super().__init__(parent)
-        self.root, self.review_csv = root, review_csv
+        self.root = root
 
     def run(self):
         try:
-            self.succeeded.emit(*refresh_results(self.root, self.review_csv))
+            self.succeeded.emit(*refresh_results(self.root))
         except Exception as exc:
             self.failed.emit(str(exc))

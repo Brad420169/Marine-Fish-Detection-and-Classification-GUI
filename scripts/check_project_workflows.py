@@ -11,23 +11,28 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 import time
-from types import SimpleNamespace
 
 import cv2
 import numpy as np
 from PyQt6.QtCore import QProcess, QTimer
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 
 import project_manager
 from annotation_session import create_session
 from dataset_validation import inspect_dataset
 from pages.main_window import MainWindow
-from review_io import load_review_rows, save_rows
+from review_io import save_rows
+from review_store import load_rows
 from yolo_export import reviewed_frames, export_yolo_dataset
 
 
 def main():
     app = QApplication.instance() or QApplication([])
+    # Same Qt setup as app.py; the default style and font crash while building MainWindow.
+    from app import APP_STYLE, set_app_font
+    app.setStyle('Fusion')
+    set_app_font(app)
+    app.setStyleSheet(APP_STYLE)
     with tempfile.TemporaryDirectory() as directory:
         folder = Path(directory)
         project_manager.PROJECTS_DIR = folder / 'projects'
@@ -53,8 +58,8 @@ def main():
         root = create_session(project, video, interval=2)
         window._open_annotation(root); app.processEvents()
         editor = window.review_page
-        assert editor.manual_session and editor.raw is not None
-        editor.names = ['Fish']
+        assert editor.session.manual_session and editor.raw is not None
+        editor.session.names = ['Fish']
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
         editor.confirm_frame()  # first frame with a fish
         assert editor.frame_number == 3
@@ -64,21 +69,19 @@ def main():
         editor.confirm_frame()
         assert reviewed_frames(root)[2] == [1, 3, 5]
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.No):
-            window._navigate_shell('train')
-        assert window.pages.currentWidget() is editor  # unsaved drafts protected
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
-            window._navigate_shell('overview')
+        window._navigate_shell('overview')
         assert window.pages.currentWidget() is window.overview_page
+        # Leaving saves the drawn box instead of discarding it; the frame stays unfinished.
+        assert any(int(r['frame_number']) == 7 for r in load_rows(root)[0])
+        assert reviewed_frames(root)[2] == [1, 3, 5]
         assert not (root / 'track_summary.csv').exists()  # manual work isn't a detection run
         window._open_annotation(root)
         assert editor.frame_number == 7  # resumes at first unfinished sampled frame
-        saved_rows = (root / 'low_confidence_review.csv').read_bytes()
+        saved_rows = load_rows(root)[0]
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
-        editor.apply_suggestions(SimpleNamespace(xyxy=[[20, 20, 60, 60], [90, 20, 120, 50]], species=['Fish', 'Fish']))
-        assert len(editor.pending) == 2  # duplicate suggestion skipped; human draft preserved
-        assert (root / 'low_confidence_review.csv').read_bytes() == saved_rows
-        editor.show_frame()  # suggestions are drafts until confirmed
+        assert len(editor.frame.pending) == 1
+        assert load_rows(root)[0] == saved_rows
+        editor.show_frame()  # drafts are discarded until confirmed
         # Completing a different detection must not replace this editor's selected result.
         prior_outputs = dict(window.results_page.outputs)
         window._pending_model_name = 'background-model'
@@ -128,8 +131,6 @@ def main():
         assert any(item['kind'] == 'model' for item in project.items)
         window._use_model(str(best), 'detection')
         assert window.weights_row.get_path() == str(best)
-        window._use_model(str(best), 'review')
-        assert editor.assist_weights == str(best)
         reloaded = project_manager.Project.load(project.path)
         assert {item['kind'] for item in reloaded.items} == {'annotation', 'dataset', 'model'}
         # Existing detection records still open in the shared editor and refresh results.
@@ -141,7 +142,7 @@ def main():
         save_rows(legacy / 'track_summary.csv', [], SUMMARY_FIELDS)
         record = project.record_run('existing-model', legacy)
         window._open_run(record)
-        assert window.pages.currentWidget() is editor and not editor.manual_session
+        assert window.pages.currentWidget() is editor and not editor.session.manual_session
         window._navigate_shell('results')
         deadline = time.monotonic() + 10
         while editor.worker and time.monotonic() < deadline:

@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QCompleter, QDialog, QHBoxLayout,
-                             QInputDialog, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                             QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from review_io import ReviewVideoWorker, draw_review, original_box
 from review_summary import RefreshWorker, results_need_refresh
@@ -86,7 +86,7 @@ class ReviewPage(QWidget):
 
     # Loading a run or session
 
-    def load_run(self, flagged_csv, output_dir, video_path):
+    def load_run(self, output_dir, video_path):
         session = self.session
         self.sam.new_source()
         self.sam.schedule_preload()
@@ -95,7 +95,7 @@ class ReviewPage(QWidget):
         self.tracking.reset()
         self.editor.copied = None
         self.video_reader.close()
-        session.open(flagged_csv, output_dir, video_path)
+        session.open(output_dir, video_path)
         self.back.setText('Back to Overview' if session.manual_session else 'Back to Results')
         self.table.setHorizontalHeaderLabels(['Saved species' if session.manual_session else 'Original AI prediction',
                                               'Confidence', 'Reviewed species', 'Decision'])
@@ -527,8 +527,7 @@ class ReviewPage(QWidget):
                 frame.decisions[index] = decision
                 if box_edit is not None:
                     frame.box_edits[index] = list(box_edit)
-                self.table.setCellWidget(index, 3, self.decision_widget(index))
-                self.style_decision(index)
+                self._restore_decision(index)
                 self.table.setRowHidden(index, hidden)
         elif 'pending' in entry:
             self.add_pending_box(entry['pending'], entry['species'], entry['index'], entry.get('tracking', False))
@@ -540,9 +539,7 @@ class ReviewPage(QWidget):
             if entry['box_edit'] is not None:
                 frame.box_edits[index] = list(entry['box_edit'])
             self.loading = False
-            # Rebuild the decision buttons so their checked state is restored too.
-            self.table.setCellWidget(index, 3, self.decision_widget(index))
-            self.style_decision(index)
+            self._restore_decision(index)
             self.table.setRowHidden(index, False)
             frame.selected = index
             self.table.selectRow(index)
@@ -551,6 +548,11 @@ class ReviewPage(QWidget):
         self.status.setText('Deletion undone. The frame has not been confirmed.')
         self.update_controls()
         self.render()
+
+    def _restore_decision(self, index):
+        """Rebuild a row's decision buttons so their checked state matches frame.decisions."""
+        self.table.setCellWidget(index, 3, self.decision_widget(index))
+        self.style_decision(index)
 
     def _undo_sam_box(self, entry):
         row = entry['sam_added']
@@ -600,15 +602,6 @@ class ReviewPage(QWidget):
                           for a, b in zip(self.drafts(), self.current())))
         return not changed or QMessageBox.question(
             self, 'Unsaved edits', 'Leave this frame and discard unconfirmed edits?') == QMessageBox.StandardButton.Yes
-
-    def select_interval(self):
-        self.nav.pause()
-        value, accepted = QInputDialog.getInt(
-            self, 'Frame interval',
-            'Advance this many frames after saving or skipping (tracking still copies to the next video frame):',
-            self.session.frame_interval, 1, max(1, self.total_frames))
-        if accepted and self.save_interval(value):
-            self.update_controls()
 
     def save_interval(self, value):
         try:
@@ -691,7 +684,8 @@ class ReviewPage(QWidget):
             QMessageBox.warning(self, 'Track not saved', str(exc))
             return False
         try:
-            session.save(rows)
+            # A completed frame's boxes and its completion are saved together.
+            session.save(rows, complete=self.frame_number if complete else None)
         except OSError as exc:
             QMessageBox.critical(self, 'Changes not saved', str(exc))
             return False
@@ -704,9 +698,6 @@ class ReviewPage(QWidget):
             if not track:
                 self.show_frame()
             return True
-        if not self.record_frame_completion():
-            self.show_frame()
-            return False
         self._write_reviewed_image()
         self.nav.advance()
         return True
@@ -731,9 +722,8 @@ class ReviewPage(QWidget):
             self.session.record_completion(self.frame_number)
             return True
         except (OSError, ValueError, KeyError) as exc:
-            QMessageBox.critical(self, 'Review completion not saved',
-                                 f'Evaluation completion could not be recorded: {exc}. Any saved detection edits '
-                                 'are retained. Confirm this frame again to retry.')
+            QMessageBox.critical(self, 'Frame completion not saved',
+                                 f'This frame could not be marked complete: {exc}. Confirm it again to retry.')
             return False
 
     # Leaving the page
@@ -799,7 +789,7 @@ class ReviewPage(QWidget):
     def refresh_results(self, callback):
         self.nav.pause()
         self.after_refresh = callback
-        worker = RefreshWorker(self.session.root, self.session.path, self)
+        worker = RefreshWorker(self.session.root, self)
         worker.succeeded.connect(self.refreshed)
         worker.failed.connect(self.refresh_failed)
         self._start_job(worker, 'Refreshing results from saved review decisions…')
@@ -835,6 +825,7 @@ class ReviewPage(QWidget):
             self.worker.requestInterruption()
             self.worker.wait()
         self.video_reader.close()
+        self.session.close()
 
     # Qt events
 

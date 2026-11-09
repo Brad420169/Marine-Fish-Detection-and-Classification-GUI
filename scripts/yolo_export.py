@@ -1,6 +1,5 @@
 """Export fully reviewed video frames as a YOLO detection dataset."""
 import json
-from collections import defaultdict
 import math
 from pathlib import Path
 import tempfile
@@ -8,31 +7,21 @@ import tempfile
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from model_evaluation import fingerprint, frame_fingerprint, read_confirmation
-from review_io import load_review_rows
+import review_store
 from review_summary import merge_detections
 
 
 def reviewed_frames(root):
+    """(original detections, review rows, fully reviewed frame numbers) for a run."""
     root = Path(root)
     source = root / 'original_detections.json'
-    reviews = root / 'low_confidence_review.csv'
-    if not source.is_file() or not reviews.is_file():
+    if not source.is_file() or not review_store.exists(root):
         raise ValueError('This run needs original detections and saved reviews before export.')
     original = json.loads(source.read_text(encoding='utf-8'))
-    rows, _ = load_review_rows(reviews)
-    completion = read_confirmation(root)
-    if completion.get('source') != fingerprint(original):
-        return original, rows, []
     total = int(original.get('total_frames', 0))
-    by_frame = defaultdict(list)
-    for row in rows:
-        by_frame[row['frame_number']].append(row)
-    verified = sorted(int(number) for number, digest in completion.get('frames', {}).items()
-                      if number.isdigit() and 1 <= int(number) <= total
-                      and digest == frame_fingerprint(by_frame[int(number)], int(number))
-                      and all(row['review_status'] in ('confirmed', 'rejected')
-                              for row in by_frame[int(number)]))
+    with review_store.ReviewStore(root) as store:
+        rows = store.load()
+        verified = sorted(n for n in store.completed_frames() if 1 <= n <= total)
     return original, rows, verified
 
 

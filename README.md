@@ -215,11 +215,9 @@ When processing finishes, the app opens **Annotate Data**. Review the prediction
 
 ## Annotate Data
 
-For manual work, choose **Annotate Data** in the sidebar, browse for a video or drag one into the drop area, set a frame interval, and click **Start annotating**. This creates a saved annotation session without requiring model weights. Sessions reopen at the first unfinished sampled frame. **Tools → Sessions** returns to the session list; detection runs can also be opened there.
+For manual work, choose **Annotate Data** in the sidebar, browse for a video or drag one into the drop area, set a frame interval, and click **Start annotating**. This creates a saved annotation session without requiring model weights. Sessions reopen at the first unfinished sampled frame. Click **Annotate Data** in the sidebar again to return to the session list; detection runs can also be opened there.
 
-**Tools → Frame interval** changes how far Previous, Skip, and Confirm & Next advance; playback still shows every video frame. Manual tracking switches navigation to one frame at a time so copied boxes can be checked. Saving an empty frame explicitly marks it as a background example; an unfinished frame is never exported.
-
-**Tools → Suggest boxes** adds drafts on the current unfinished frame, using CPU inference. **Tools → Choose model** selects the weights; **Assist annotation** after training selects the new model for you. Existing boxes and completed frames are preserved. Check suggested boxes and species before saving; accepted suggestions become human-confirmed annotations, without invented tracking IDs or confidence scores.
+The session's frame interval sets how far Previous, Skip, and Confirm & Next advance; playback still shows every video frame. Manual tracking switches navigation to one frame at a time so copied boxes can be checked. Saving an empty frame explicitly marks it as a background example; an unfinished frame is never exported.
 
 The annotation page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
 
@@ -235,14 +233,16 @@ pixi run setup-sam
 
 In **Annotate Data**, click the image to focus it, then:
 
-1. Tick **Automatic Annotation (SAM)**, then **left-click** inside a fish to start a mask preview.
-2. Keep using **left-click** to include missed parts. Use **right-click** to exclude unwanted regions. Wait for each preview to finish before adding another point.
-3. Enter the class name in the **SAM** field in the left panel and press **Enter**. This generates a box around the mask and saves it through the normal annotation flow. A new species name uses the existing confirmation prompt.
-4. Use **Confirm & Next** separately when the entire frame has been checked. The saved box can be edited and exported like a manually drawn box.
+1. **Double-left-click** inside a fish to start a mask preview.
+2. **Double-left-click each additional fish** to make separate boxes. Earlier selections become pending boxes in the Annotations panel; clicks made while SAM is working are queued. To refine the active fish instead, use **Shift + double-left-click** to include missed parts and **double-right-click** to exclude unwanted regions.
+3. Enter the active fish’s class name in the **SAM** field in the left panel and press **Enter**. Name earlier fish separately in their Annotations rows and press Enter to save each box, or confirm all labelled boxes together. This generates a box around the mask and saves it through the normal annotation flow. A new species name uses the existing confirmation prompt.
+4. Adjust the saved box by dragging to move it or **Ctrl+dragging** an edge or corner to resize it. Use **Confirm & Next** separately when the entire frame has been checked. The saved box can be edited and exported like a manually drawn box.
 
-**Ctrl+Z** discards the preview or undoes the newly saved SAM box before frame confirmation. **Esc** also discards the preview. Untick SAM to return to ordinary drawing and editing. Leaving a frame with an unfinished preview asks before discarding it. A negative click cannot start a new annotation. Ordinary right-drag exclusion remains available when SAM is inactive.
+**Ctrl+Z** discards the active preview and queued clicks, keeping earlier pending boxes, or undoes the newly saved SAM box before frame confirmation. **Esc** also discards an idle preview. Save or cancel the preview to return to ordinary drawing and editing; no mode toggle is needed. Leaving a frame with an unfinished preview asks before discarding it. A negative double-click cannot start a new annotation. Ordinary right-drag exclusion remains available when SAM is inactive.
 
-The first click loads the model and encodes the frame; later clicks reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species, automatically confirm frames, or track through video. The checkpoint is stored under `models/sam/`, separate from detection weights.
+**Preload nearby frames** is enabled by default in the Annotations panel. After a short idle delay, it prepares the current frame and the next two video frames in the background. The label shows **SAM ready for this frame** when its features are cached. Preloading pauses during playback and cancels further queued frames when you move elsewhere or leave the page. Turn the checkbox off to save CPU and battery. A running frame encoding finishes before cancellation takes effect.
+
+The cache holds up to three frames (about 48 MiB of image features with SAM 2.1 Tiny), shares the existing model weights, and never creates annotations. A ready frame can be segmented without re-encoding it; clicking before preparation finishes or jumping beyond the cache can still take several seconds. The first use loads the model; later prompts reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species, automatically confirm frames, or track through video. The checkpoint is stored under `models/sam/`, separate from detection weights.
 
 ### Inspect and correct predictions
 
@@ -271,20 +271,28 @@ Manual annotations contribute to detection counts and Max-N after the results re
 
 Click and drag inside an existing box to move it. Hold **Ctrl** and drag an edge to resize its width or height, or a corner to resize both. Both model boxes and manual annotations can be moved, including while zoomed in; their coordinates stay inside the frame. Click **Confirm & Next** to save position changes. Model boxes retain their original detection identity, so moving one updates the same detection in refreshed results rather than creating a duplicate.
 
-Manual tracking copies a box forward one frame at a time:
+The **Track?** toggle follows one fish at a time. It checks up to **three frames ahead**, prefers matching AI annotations, and proposes boxes for gaps:
 
-1. Draw a box, choose its species in the Annotations panel, and press **Enter** to save it. Click the **Track?** tick in that panel to opt into tracking. The current frame stays open; there is no end-frame picker.
-2. Click **Confirm & Next** to save this frame and copy the box to the next frame.
-3. If the next frame already has a same-species annotation overlapping the tracked box (at least 50% intersection-over-union), that annotation carries the track instead of adding a duplicate. If a later frame has no match, manual copying resumes from the latest box. Adjust the box as needed, then confirm again to continue.
-4. When the fish disappears, select its box and press **Delete** to stop tracking from that frame onward. **Ctrl+Z** restores the deletion until you confirm or save another annotation.
+1. Save a drawn or SAM box with its species, then enable **Track?**. The page enters **tracking mode**: **Confirm & Next** becomes **Next (tracking)** and a **Finish fish** button appears.
+2. **Next (tracking)** saves this fish's box, prepares the next three frames for it, and moves on. It does **not** mark the frame complete, so other fish on that frame stay unlabelled until you come back to them. Only the fish you are tracking moves forward.
+3. Matching AI detections take priority over untracked manual matches. Their boxes, confidence and original detector track IDs are preserved; they are linked to your track without adding duplicate copies. Close competing AI matches pause the lookahead rather than forcing an identity assignment.
+4. If AI detections are missing between matching anchors, pending gap boxes are interpolated between the anchor positions. With no later anchor in the three-frame window, the last position is copied. When you open a gap frame, SAM attempts to shift and resize its box using cached features where available. SAM does not alter the AI anchor boxes. If SAM cannot find the fish in a copied box, the status bar warns that it may have left; the box is kept, because SAM cannot reliably tell a hidden fish from empty reef.
+5. When the fish leaves, **Delete** its box (this ends the track from that frame onward; **Ctrl+Z** restores it) or press **Finish fish** on its last frame (its box there is kept and later suggestions are removed). Either way the button returns to **Confirm & Next**.
+6. Go back and track the next fish. A track can pass through frames that were already completed: a new suggestion reopens such a frame, and once you review the box with **Next (tracking)**, or finish or delete the track, that frame is marked complete again.
 
-Playback, arrow keys, and Skip only navigate; they do not copy boxes. Copied boxes remain pending until confirmed, and the next frame is not marked reviewed. Confirming a frame again never duplicates or overwrites an existing next-frame box. Deleting a track also removes any later boxes already saved for that track; earlier frames stay intact. Existing range-based tracks remain readable, but no longer interpolate. Manual tracks have no model confidence or AI-generated track ID.
+When every fish is labelled, use **Confirm & Next** to complete the remaining frames. On a frame with tracked fish but outside tracking mode, Confirm & Next completes the frame and moves every track on it forward.
+
+Only untouched generated gap boxes can be recalculated or replaced by matching AI detections. Reviewed boxes are preserved; rejected detections, finished fish and deleted tracks block further lookahead. The same detection cannot be claimed by two manual tracks. A reviewed manual box already on this track remains authoritative even when an AI prediction overlaps it.
+
+SAM adjustments remain unsaved edits until you save or confirm. If SAM is unavailable, finds no mask, or proposes an implausible position or size, the gap box stays at its estimated position and the status message asks you to adjust it manually. Neither interpolation nor SAM proves that the fish is present or is the same individual.
+
+Playback, arrow keys and Skip only navigate; they do not extend the track. Future suggestions remain pending and do not confirm frames. Reconfirming does not duplicate suggestions. The lookahead reuses existing AI detections rather than rerunning the detector, and SAM runs only for missing boxes when their frame is opened. Manual gap boxes have no fabricated model confidence or detector track ID.
 
 ### Remove detections from a fixed area
 
 Hold the **right mouse button and drag** a rectangle over an unwanted annotation. Model boxes whose centres fall inside that area are removed from the current and later frames of this video, regardless of predicted species. Earlier frames, manual annotations, and active tracks are preserved. Zoom and pan are supported.
 
-**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the review CSV and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or stops its track); repeated deletions no longer trigger automatic suppression.
+**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the run's reviews and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or stops its track); repeated deletions no longer trigger automatic suppression.
 
 ### Return to refreshed results
 
@@ -310,7 +318,7 @@ Use **View Results** in the sidebar or **Back to Results** after review. The pag
 | **Open Annotations** | The review page for this run. |
 | **Train a Model** | YOLO training from a project dataset or an external `data.yaml`. |
 
-The run directory also contains `low_confidence_review.csv` for flagged detections and saved review decisions. Output buttons are disabled when the corresponding file is unavailable.
+The run directory also contains `review.sqlite`, the app's working copy of flagged detections, annotations and review decisions. It is for the app only: share `track_summary.csv` and `reviewed_detections.csv` (written by Refresh Results) with R or other analysis tools. Runs made by earlier versions are converted automatically the first time they are opened; their old `low_confidence_review.csv` and `review_completion.json` are kept, renamed `*.migrated.*`. Output buttons are disabled when the corresponding file is unavailable.
 
 ### Charts and Max-N examples
 
@@ -322,7 +330,7 @@ The example frames show available Max-N observations with the relevant fish high
 
 ## Train a Model
 
-Dataset export is available from **Annotate Data → Tools → Export dataset**. Choose training and validation percentages, a new destination folder, and **Generate AI Training Data**. The remaining percentage is held out for testing. Only completed frames are exported, including explicitly confirmed empty frames. Each session currently contains one source video; its frames are split in time order. At least three completed frames and a labelled fish are required. Existing dataset directories are never overwritten.
+Dataset export is available from the **Export dataset** button on the **Annotate Data** page. Choose training and validation percentages, a new destination folder, and **Generate AI Training Data**. The remaining percentage is held out for testing. Only completed frames are exported, including explicitly confirmed empty frames. Each session currently contains one source video; its frames are split in time order. At least three completed frames and a labelled fish are required. Existing dataset directories are never overwritten.
 
 Exported datasets appear in Overview and in the training page's project dataset selector. Click **Use in Train a Model** to continue immediately.
 
@@ -334,7 +342,7 @@ To start directly with an existing dataset:
 4. Choose starting YOLO `.pt` weights, epochs, batch size, patience, image size, and run name. RF-DETR `.pth` weights cannot be trained with this trainer.
 5. Click **Start Training** and follow the learning dashboard and log. **Stop Training** stops the process. Dataset and model inputs are locked while training or evaluation is active.
 6. Use **Evaluate Test Set** after successful training to evaluate the held-out images.
-7. Use **Use for detection** or **Assist annotation** to reuse the trained weights. Completed models are saved in the project Overview and can be reopened later.
+7. Use **Use for detection** to reuse the trained weights. Completed models are saved in the project Overview and can be reopened later.
 
 Training saves weights, including `best.pt`, under the dataset's `runs` folder. Original datasets, model weights, and existing annotations remain intact.
 
@@ -382,7 +390,7 @@ models/Fish_Only_YOLOv4.names
 
 The `.cfg` must match the trained weights. The optional `.names` contains one class label per line in training order (for a single fish class, `fish`). Without it, labels are `class_0`, `class_1`, etc. The label count must match the configuration.
 
-Use **Add model weights…** and select `.weights`; the matching `.cfg` and optional `.names` are copied with it. You can also place the files in `models/` and refresh the model selector. Darknet models work in detection and **Suggest boxes**, using OpenCV on **CPU** with ByteTrack tracking. They cannot be trained with the app's Ultralytics YOLO trainer.
+Use **Add model weights…** and select `.weights`; the matching `.cfg` and optional `.names` are copied with it. You can also place the files in `models/` and refresh the model selector. Darknet models work in detection, using OpenCV on **CPU** with ByteTrack tracking. They cannot be trained with the app's Ultralytics YOLO trainer.
 
 A ZIP containing `.cfg` and `.weights` is not a PyTorch checkpoint, even if named `.pt`. Extract the files first and select `.weights`; renaming or zipping them does not convert the model.
 
@@ -415,7 +423,7 @@ class DetectionFrame:
     track_ids: list[int | None] = field(default_factory=list)   # None if no tracker
 ```
 
-As long as your class returns a correctly shaped `DetectionFrame`, everything downstream, such as the annotated output video, `track_summary.csv`, `low_confidence_review.csv`, the Max-N example frames, and the Results page charts, will work automatically.
+As long as your class returns a correctly shaped `DetectionFrame`, everything downstream, such as the annotated output video, `track_summary.csv`, the flagged detections for review, the Max-N example frames, and the Results page charts, will work automatically.
 
 ### Steps to add a new model
 

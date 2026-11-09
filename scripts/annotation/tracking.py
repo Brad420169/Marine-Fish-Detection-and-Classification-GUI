@@ -183,9 +183,7 @@ class TrackingController:
         by_id = {row.get('annotation_id'): (index, row) for index, row in enumerate(page.current())}
         edits = page.frame.box_edits
         adjusted, failures, lost = 0, [], []
-        for result in results:
-            identity, box, error = result[:3]
-            not_found = len(result) > 3 and result[3]
+        for identity, box, error, not_found in results:
             if identity not in by_id:
                 continue
             index, row = by_id[identity]

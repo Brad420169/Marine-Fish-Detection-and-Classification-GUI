@@ -7,7 +7,7 @@ held in ``worker``.
 from PyQt6.QtCore import QThread, QTimer, Qt
 from PyQt6.QtWidgets import QCompleter
 
-from sam_assist import SAMSession
+from sam_assist import CHECKPOINT, SAMPreloadWorker, SAMSession, SAMTrackWorker, SAMWorker, mask_box
 
 
 class SamAssist:
@@ -76,7 +76,6 @@ class SamAssist:
         if include and not extend and self.points:
             # A plain double-click elsewhere starts another fish; keep this one as a pending box.
             if self.mask is not None and self.mask.any():
-                from sam_assist import mask_box
                 box = mask_box(self.mask)
                 species = page.sam_class.text().strip()
                 self.clear(render=False, clear_queue=False)
@@ -99,7 +98,6 @@ class SamAssist:
             completer.popup().setObjectName("samClassSuggestions")
             page.sam_class.setCompleter(completer)
         page.render()
-        from sam_assist import SAMWorker
         token = self.frame_token
         # Image features survive cancelled prompts; request tokens still reject stale results.
         worker = SAMWorker(self.session, page.raw, self.frame_key(), self.points, self.labels, page)
@@ -155,7 +153,6 @@ class SamAssist:
             page.status.setText('Enter a class name before creating the SAM bounding box.')
             page.sam_class.setFocus()
             return
-        from sam_assist import mask_box
         try:
             box = mask_box(self.mask)
         except ValueError as exc:
@@ -174,7 +171,6 @@ class SamAssist:
     def adjust_boxes(self, boxes, on_results):
         """Fit suggested track boxes to the fish in the background; one job at a time."""
         page = self.page
-        from sam_assist import SAMTrackWorker
         self.stop_preload()
         token = self.frame_token
         worker = SAMTrackWorker(self.session, page.raw, self.frame_key(), boxes, page)
@@ -198,7 +194,6 @@ class SamAssist:
             self.preload_timer.start(600)
 
     def start_preload(self):
-        from sam_assist import CHECKPOINT, SAMPreloadWorker
         page = self.page
         if (page.shutting_down or not page.isVisible() or page.nav.playing or page.raw is None
                 or not page.sam_preload_check.isChecked() or self.preload_failed

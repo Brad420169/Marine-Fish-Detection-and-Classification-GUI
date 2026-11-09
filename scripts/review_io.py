@@ -58,24 +58,27 @@ def original_box(row):
     return review_box(dict(zip(('x1', 'y1', 'x2', 'y2'), box)))
 
 
+def normalize_review_rows(rows, fields):
+    """Fill in defaults for older runs and check every box. Returns (rows, fields)."""
+    for row in rows:
+        row['frame_number'] = int(row['frame_number'])
+        for key in ('x1', 'y1', 'x2', 'y2'):
+            float(row[key])
+        # Legacy corrections retain their original prediction in notes.
+        original = row.get('notes') or ''
+        row.setdefault('original_species', original.removeprefix('AI predicted: ') if original.startswith('AI predicted: ') else row['species'])
+        row.setdefault('review_status', 'confirmed' if row.get('reviewed') == 'yes' else 'pending')
+        row.setdefault('annotation_source', 'model')
+        row.setdefault('annotation_id', '')
+    return rows, list(dict.fromkeys(list(fields) + REVIEW_COLUMNS))
+
+
 def load_review_rows(path):
-    """Read a review CSV, filling in defaults for older runs. Returns (rows, fields)."""
+    """Read a review CSV (older runs, before review.sqlite). Returns (rows, fields)."""
     with Path(path).open(newline='', encoding='utf-8') as stream:
         reader = csv.DictReader(stream)
-        fields = list(reader.fieldnames or [])
-        rows = []
-        for row in reader:
-            row['frame_number'] = int(row['frame_number'])
-            for key in ('x1', 'y1', 'x2', 'y2'):
-                float(row[key])
-            # Legacy corrections retain their original prediction in notes.
-            original = row.get('notes', '')
-            row.setdefault('original_species', original.removeprefix('AI predicted: ') if original.startswith('AI predicted: ') else row['species'])
-            row.setdefault('review_status', 'confirmed' if row.get('reviewed') == 'yes' else 'pending')
-            row.setdefault('annotation_source', 'model')
-            row.setdefault('annotation_id', '')
-            rows.append(row)
-    return rows, list(dict.fromkeys(fields + REVIEW_COLUMNS))
+        rows = list(reader)
+        return normalize_review_rows(rows, reader.fieldnames or [])
 
 
 def load_species_names(root, rows):
@@ -86,7 +89,7 @@ def load_species_names(root, rows):
 
 
 def save_rows(path, rows, fields):
-    """Replace the CSV only after the complete new version has reached disk."""
+    """Write a CSV export, replacing the file only after the complete new version has reached disk."""
     path = Path(path)
     fd, name = tempfile.mkstemp(dir=path.parent, suffix='.csv.tmp')
     try:
@@ -101,21 +104,40 @@ def save_rows(path, rows, fields):
         Path(name).unlink(missing_ok=True)
 
 
-def draw_review(frame, rows, selected=-1, context=()):
+# Annotation-page colours (BGR), chosen to stand out against blue-green water.
+AI_COLOUR = (0, 215, 255)        # yellow: boxes from the detection model
+MANUAL_COLOUR = (230, 70, 255)   # magenta: drawn by hand or with SAM
+SELECTED_COLOUR = (255, 255, 255)
+
+
+def box_colour(row, selected=False):
+    """Colour for one box on the annotation page, by where the box came from."""
+    if selected:
+        return SELECTED_COLOUR
+    return MANUAL_COLOUR if row.get('annotation_source') == 'manual' else AI_COLOUR
+
+
+def draw_review(frame, rows, selected=-1, context=(), by_source=False):
+    """Draw review boxes. ``by_source`` colours AI and manual/SAM boxes differently;
+    saved images and videos keep the single-colour style."""
     canvas = frame.copy()
     # New runs retain all detections on flagged frames, including confident fish.
     flagged_boxes = {tuple(round(v, 2) for v in original_box(r)) for r in rows if r.get('annotation_source') != 'manual'}
     for det in context:
         if tuple(round(float(v), 2) for v in det['bbox']) not in flagged_boxes:
             x1,y1,x2,y2 = map(round, det['bbox'])
-            cv2.rectangle(canvas,(x1,y1),(x2,y2),(255,210,0),2)
-            cv2.putText(canvas,det['species'],(x1,max(18,y1-6)),cv2.FONT_HERSHEY_SIMPLEX,.5,(255,210,0),1)
+            colour = AI_COLOUR if by_source else (255,210,0)
+            cv2.rectangle(canvas,(x1,y1),(x2,y2),colour,2)
+            cv2.putText(canvas,det['species'],(x1,max(18,y1-6)),cv2.FONT_HERSHEY_SIMPLEX,.5,colour,1)
     for i,row in enumerate(rows):
         status = row.get('review_status', '')
         if status == 'rejected':
             continue
         x1,y1,x2,y2 = [round(float(row[k])) for k in ('x1','y1','x2','y2')]
-        colour = (0,165,255) if i == selected else (0,200,100)
+        if by_source:
+            colour = box_colour(row, i == selected)
+        else:
+            colour = (0,165,255) if i == selected else (0,200,100)
         label = row['species']
         cv2.rectangle(canvas,(x1,y1),(x2,y2),colour,3 if i==selected else 2)
         cv2.putText(canvas,label,(x1,max(18,y1-6)),cv2.FONT_HERSHEY_SIMPLEX,.6,colour,2)

@@ -282,7 +282,6 @@ class MainWindow(QMainWindow):
 
         self.review_page = ReviewPage(on_back=self._annotation_back)
         self.review_page.export_requested.connect(self._export_annotations)
-        self.review_page.library_requested.connect(lambda: self._navigate_shell("annotations"))
         self.review_page.results_refreshed.connect(self._reload_reviewed_results)
         self.pages.addWidget(self.review_page)
         self.training_page = TrainingPage()
@@ -307,8 +306,8 @@ class MainWindow(QMainWindow):
             self.training_page.stop_job()
             if not self.training_page.process.waitForFinished(3000):
                 event.ignore(); return
-        if self.review_page.suggestion_worker:
-            QMessageBox.information(self, 'Suggestions running', 'Wait for model suggestions to finish before closing.')
+        if self.review_page.sam.worker:
+            QMessageBox.information(self, 'SAM running', 'Wait for SAM to finish before closing.')
             event.ignore(); return
         if self.pages.currentWidget() is self.review_page and not self.review_page.leave_to(self.close):
             event.ignore(); return
@@ -390,7 +389,7 @@ class MainWindow(QMainWindow):
 
     def _open_annotation(self, root):
         try:
-            self.review_page.load_run(Path(root) / 'low_confidence_review.csv', root, None)
+            self.review_page.load_run(root, None)
             self.pages.setCurrentWidget(self.review_page)
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.warning(self, 'Cannot open annotations', str(exc))
@@ -401,14 +400,14 @@ class MainWindow(QMainWindow):
             self._open_review(self.results_page.outputs, Path(record.output_dir))
 
     def _annotation_back(self):
-        if self.review_page.manual_session: self._navigate_shell('overview')
+        if self.review_page.session.manual_session: self._navigate_shell('overview')
         else: self._show_results_page()
 
     def _export_annotations(self):
         if not self.review_page.leave_to(self._export_annotations): return
         if self.export_page.export_worker:
             self.pages.setCurrentWidget(self.export_page); return
-        self.export_page.set_source(self.review_page.root)
+        self.export_page.set_source(self.review_page.session.root)
         self.pages.setCurrentWidget(self.export_page)
 
     def _register_dataset(self, filename):
@@ -431,19 +430,15 @@ class MainWindow(QMainWindow):
         self.training_page._inspect_dataset()
         self.pages.setCurrentWidget(self.training_page)
 
-    def _use_model(self, filename, target):
-        if target == 'detection':
-            self._navigate_shell(target)
-            index = next((i for i in range(self.weights_row.combo.count())
-                          if str(self.weights_row.combo.itemData(i)) == filename), -1)
-            if index < 0:
-                self.weights_row.combo.addItem(Path(filename).parent.parent.name + ' / best.pt', Path(filename))
-                index = self.weights_row.combo.count() - 1
-            self.weights_row.combo.setEnabled(True)
-            self.weights_row.combo.setCurrentIndex(index)
-        else:
-            self.review_page.assist_weights = filename
-            self._navigate_shell(target)
+    def _use_model(self, filename, target='detection'):
+        self._navigate_shell('detection')
+        index = next((i for i in range(self.weights_row.combo.count())
+                      if str(self.weights_row.combo.itemData(i)) == filename), -1)
+        if index < 0:
+            self.weights_row.combo.addItem(Path(filename).parent.parent.name + ' / best.pt', Path(filename))
+            index = self.weights_row.combo.count() - 1
+        self.weights_row.combo.setEnabled(True)
+        self.weights_row.combo.setCurrentIndex(index)
 
     # Navigation
 
@@ -499,12 +494,11 @@ class MainWindow(QMainWindow):
     def open_project(self, project: Project) -> None:
         """Adopt a project chosen on the Projects page and show its overview."""
         if self._work_in_progress():
-            QMessageBox.information(self, 'Work in progress', 'Wait for active detection, export, suggestions or training to finish before changing projects.')
+            QMessageBox.information(self, 'Work in progress', 'Wait for active detection, export, SAM or training to finish before changing projects.')
             return
         self.project = project
         self.review_page.shutdown()
-        self.review_page.root = None
-        self.review_page.assist_weights = None
+        self.review_page.session.root = None
         self.results_page.outputs = {}
         self.results_page.output_dir = None
         self.training_page.set_project(project)
@@ -521,7 +515,7 @@ class MainWindow(QMainWindow):
 
     def _work_in_progress(self):
         return bool((self.worker and self.worker.isRunning()) or self.export_page.export_worker
-                    or self.review_page.worker or self.review_page.suggestion_worker
+                    or self.review_page.worker or self.review_page.sam.worker
                     or self.training_page.process.state() != QProcess.ProcessState.NotRunning)
 
     def _project_deleted(self, project):
@@ -568,10 +562,7 @@ class MainWindow(QMainWindow):
             if annotated_videos:
                 video_path = annotated_videos[0]
 
-        outputs = {
-            "summary_csv": summary_csv,
-            "flagged_csv": output_dir / "low_confidence_review.csv",
-        }
+        outputs = {"summary_csv": summary_csv}
         if video_path is not None:
             outputs["video"] = video_path
 
@@ -594,11 +585,7 @@ class MainWindow(QMainWindow):
 
     def _open_review(self, outputs: dict, output_dir: Path) -> None:
         """Launch the low-confidence review page for the current results."""
-        self.review_page.load_run(
-            flagged_csv=outputs.get("flagged_csv"),
-            output_dir=output_dir,
-            video_path=outputs.get("video"),
-        )
+        self.review_page.load_run(output_dir=output_dir, video_path=outputs.get("video"))
         self.pages.setCurrentWidget(self.review_page)
 
     def _open_training(self, output_dir: Path) -> None:

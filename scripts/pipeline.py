@@ -324,7 +324,8 @@ def run_pipeline(
 
     Returns
     -------
-    dict with keys "video", "summary_csv", "flagged_csv" pointing to outputs.
+    dict with keys "video" and "summary_csv" pointing to outputs. Low-confidence
+    detections for review go into the run's review database (review.sqlite).
     """
 
     def log(msg: str) -> None:
@@ -352,10 +353,10 @@ def run_pipeline(
 
     video_stem   = Path(source_name).stem
     summary_csv  = config.output_dir / "track_summary.csv"
-    flagged_csv  = config.output_dir / "low_confidence_review.csv"
+    review_db    = config.output_dir / "review.sqlite"
     output_video = config.output_dir / f"{video_stem}_annotated.mp4"
 
-    for old_file in (summary_csv, flagged_csv, output_video):
+    for old_file in (summary_csv, review_db, output_video):
         if old_file.exists():
             old_file.unlink()
 
@@ -546,7 +547,7 @@ def run_pipeline(
         writer.release()
 
     if was_cancelled:
-        for partial_file in (output_video, summary_csv, flagged_csv):
+        for partial_file in (output_video, summary_csv, review_db):
             try:
                 partial_file.unlink(missing_ok=True)
             except OSError:
@@ -617,10 +618,8 @@ def run_pipeline(
 
     flagged_detections.sort(key=lambda r: r["frame_number"])
 
-    with flagged_csv.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=FLAGGED_FIELDS)
-        w.writeheader()
-        w.writerows(flagged_detections)
+    from review_store import ReviewStore
+    ReviewStore.create(config.output_dir, flagged_detections, FLAGGED_FIELDS).close()
 
     # Save the top two distinct annotated Max-N frames for quick visual review.
     example_frames = extract_maxn_example_frames(
@@ -642,7 +641,6 @@ def run_pipeline(
     outputs = {
         "video":       output_video,
         "summary_csv": summary_csv,
-        "flagged_csv": flagged_csv,
     }
 
     for index, image_path in enumerate(example_frames, start=1):

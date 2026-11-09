@@ -6,9 +6,10 @@ import tempfile
 import cv2
 import numpy as np
 
-from model_evaluation import confirm_review_frame
 from pipeline import SUMMARY_FIELDS
 from review_io import save_rows
+from review_store import ReviewStore
+import review_store
 from review_summary import refresh_results, results_need_refresh
 from yolo_export import export_yolo_dataset, reviewed_frames
 
@@ -32,11 +33,12 @@ def main():
                      review_status='confirmed', annotation_source='model', annotation_id=''),
                 dict(frame_number=3, species='Coral fish', x1=0, y1=0, x2=50, y2=50,
                      review_status='confirmed', annotation_source='manual', annotation_id='new-1')]
-        save_rows(root / 'low_confidence_review.csv', rows, fields)
-        for number in range(1, 4): confirm_review_frame(root, rows, number)
+        with ReviewStore.create(root, rows, fields) as store:
+            for number in range(1, 4):
+                store.record_completion(number, [r for r in rows if r['frame_number'] == number])
         assert results_need_refresh(root)
         save_rows(root / 'track_summary.csv', [], SUMMARY_FIELDS)
-        refresh_results(root, root / 'low_confidence_review.csv')
+        refresh_results(root)
         assert not results_need_refresh(root)
         yaml, counts = export_yolo_dataset(root, root / 'dataset')
         assert counts == (1, 1, 1)
@@ -45,7 +47,7 @@ def main():
         assert (root / 'dataset/labels/val/frame_000002.txt').read_text() == ''
         assert (root / 'dataset/labels/test/frame_000003.txt').read_text().strip() == '0 0.250000 0.250000 0.500000 0.500000'
         rows[0]['species'] = 'Changed after confirmation'
-        save_rows(root / 'low_confidence_review.csv', rows, fields)
+        review_store.save_rows(root, rows)
         assert reviewed_frames(root)[2] == [2, 3]
     print('YOLO export check passed')
 
