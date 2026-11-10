@@ -3,16 +3,23 @@ from uuid import uuid4
 
 from review_io import review_box, original_box, box_iou, model_review_row, box_identity
 
-# Pending boxes the lookahead generated: between two matches, or copied after the last.
-INTERPOLATED, COPIED = 'sam_pending', 'sam_copy'
-GENERATED = (INTERPOLATED, COPIED)
+# Pending boxes generated for a track: by the lookahead (between two matches, or copied
+# after the last) or by SAM's video tracker.
+INTERPOLATED, COPIED, VIDEO = 'sam_pending', 'sam_copy', 'sam_video'
+GENERATED = (INTERPOLATED, COPIED, VIDEO)
 
 
-def create_track(rows, annotation_id):
-    source = next((r for r in rows if r.get('annotation_id') == annotation_id), None)
-    if (source is None or source.get('annotation_source') != 'manual'
-            or source.get('manual_track_id') or source.get('review_status') == 'rejected'):
-        raise ValueError('Select a saved, untracked manual annotation.')
+def create_track(rows, source):
+    """Start a track from a saved box: a manual annotation or an AI detection.
+
+    ``source`` is the row itself, or a manual annotation's id.
+    """
+    if not isinstance(source, dict):
+        source = next((r for r in rows if r.get('annotation_id') == source), None)
+    elif not any(r is source for r in rows):
+        source = None
+    if source is None or source.get('manual_track_id') or source.get('review_status') == 'rejected':
+        raise ValueError('Select a saved, untracked annotation.')
     review_box(source)
     start = dict(source, manual_track_id=str(uuid4()), track_keyframe='')
     return [start if r is source else r for r in rows], start['manual_track_id']
@@ -125,6 +132,8 @@ def advance_tracks(rows, frame_number, total_frames, next_detections=(), *,
                  and (r.get('review_status') == 'rejected' or r.get('track_keyframe') == 'end')]
         if any(number <= frame_number for number in stops):
             continue
+        if any(r.get('manual_track_id') == identity and r.get('track_keyframe') == 'end' for r in rows):
+            continue  # a finished fish was reviewed up to its end; don't refill boxes deleted from it
         later_stops = [number for number in stops if number > frame_number]
         track_end = min(end, min(later_stops)-1) if later_stops else end
         generated = {int(r['frame_number']): r for r in rows

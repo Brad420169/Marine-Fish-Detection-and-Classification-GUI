@@ -6,7 +6,7 @@ exist before build() runs.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QSizePolicy, QTableWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from ui_icons import icon
@@ -27,25 +27,9 @@ def button(layout, text, action):
 
 def build(page):
     root = QVBoxLayout(page)
-    root.setContentsMargins(16, 12, 16, 12)
-    root.setSpacing(10)
-    title = QLabel('Annotate Data')
-    title.setObjectName('pageTitle')
-    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    root.addWidget(title)
-    hint = QLabel(help_text.HINT)
-    hint.setWordWrap(True)
-    hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    root.addWidget(hint)
-    page.progress = QLabel()
-    page.progress.setTextFormat(Qt.TextFormat.RichText)
-    page.progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    page.progress.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse
-                                          | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
-    page.progress.linkActivated.connect(page.nav.jump)
-    page.progress.setToolTip('Click to jump to any video frame by number.')
-    root.addWidget(page.progress)
-    root.addLayout(_toolbar(page))
+    root.setContentsMargins(16, 8, 16, 12)
+    root.setSpacing(8)
+    root.addLayout(_header(page))
 
     images = QHBoxLayout()
     images.addWidget(_annotations_panel(page))
@@ -66,16 +50,34 @@ def build(page):
     QShortcut(QKeySequence('Alt+Left'), page, activated=lambda: page.nav.go(-1))
 
 
-def _toolbar(page):
-    bar = QHBoxLayout()
+def _header(page):
+    """One row: box legend | title over the frame counter | Play and Export."""
+    bar = QGridLayout()
+    bar.setContentsMargins(0, 0, 0, 0)
+    bar.setVerticalSpacing(0)
     page.box_legend = QLabel(help_text.BOX_LEGEND)
     page.box_legend.setToolTip('Box colours show where each box came from.')
-    bar.addWidget(page.box_legend)
-    bar.addStretch()
-    page.play_button = button(bar, 'Play', page.nav.toggle)
+    bar.addWidget(page.box_legend, 0, 0, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    title = QLabel('Annotate Data')
+    title.setObjectName('pageTitle')
+    title.setToolTip(help_text.SHORTCUTS)
+    bar.addWidget(title, 0, 1, Qt.AlignmentFlag.AlignCenter)
+    page.progress = QLabel()
+    page.progress.setTextFormat(Qt.TextFormat.RichText)
+    page.progress.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse
+                                          | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+    page.progress.linkActivated.connect(page.nav.jump)
+    page.progress.setToolTip('Click the frame number to jump to any frame.')
+    bar.addWidget(page.progress, 1, 1, Qt.AlignmentFlag.AlignCenter)
+    actions = QHBoxLayout()
+    actions.setSpacing(8)
+    actions.addStretch()
+    page.play_button = button(actions, 'Play', page.nav.toggle)
     page.play_button.setIcon(icon('play'))
-    bar.addStretch()
-    button(bar, 'Export dataset', page.export_requested.emit)
+    button(actions, 'Export dataset', page.export_requested.emit)
+    bar.addLayout(actions, 0, 2, 2, 1, Qt.AlignmentFlag.AlignVCenter)
+    bar.setColumnStretch(0, 1)
+    bar.setColumnStretch(2, 1)
     return bar
 
 
@@ -206,21 +208,19 @@ def _tips_panel():
     panel = QGroupBox('Annotation tips')
     tabs = QTabWidget()
     tabs.setStyleSheet('QTabWidget::pane { border: 0; }'
-                       'QTabBar::tab { padding: 5px 10px; color: #b1d2e7; background: #082c40; }'
-                       f'QTabBar::tab:selected {{ color: {ACCENT}; background: #12465b; }}')
+                       'QTabBar::tab { padding: 4px 12px; color: #b1d2e7; background: #082c40;'
+                       ' border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; }'
+                       f'QTabBar::tab:selected {{ color: {ACCENT}; background: #12465b; font-weight: bold; }}')
     for title, rows in help_text.TIPS:
-        tab = QWidget()
-        tip_rows = QVBoxLayout(tab)
-        tip_rows.setContentsMargins(4, 8, 4, 4)
-        tip_rows.setSpacing(7)
-        for heading, detail in rows:
-            label = QLabel(f'<span style="color: {ACCENT};"><b>{heading}</b></span> &nbsp; {detail}')
-            label.setWordWrap(True)
-            label.setMinimumWidth(300)
-            tip_rows.addWidget(label)
-        tip_rows.addStretch()
-        tabs.addTab(tab, title)
-    QVBoxLayout(panel).addWidget(tabs)
+        tips = QLabel(help_text.tips_html(rows))
+        tips.setTextFormat(Qt.TextFormat.RichText)
+        tips.setWordWrap(True)
+        tips.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        tips.setContentsMargins(4, 6, 4, 2)
+        tabs.addTab(tips, title)
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(8, 14, 8, 6)
+    layout.addWidget(tabs)
     return panel
 
 

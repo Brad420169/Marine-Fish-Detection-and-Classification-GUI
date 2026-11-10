@@ -16,3 +16,6 @@ models/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Errors the app caught (error_report.py)
+error_log.txt

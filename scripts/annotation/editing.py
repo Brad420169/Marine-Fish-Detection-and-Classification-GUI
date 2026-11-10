@@ -288,10 +288,16 @@ class BoxEditor:
         session = page.session
         old_rows = session.rows
         deleted = dict(old, review_status='rejected', reviewed='yes', rejection_source='user')
+        track = old.get('manual_track_id')
+        ends_track = bool(track) and track == page.tracking.active
+        if track and not ends_track:
+            # A finished (or not followed) fish: delete just this box. Detached from the
+            # track, its rejection does not end the track when this frame is confirmed.
+            deleted.update(manual_track_id='', track_keyframe='')
         rows = [deleted if r is old else r for r in old_rows]
         try:
-            if old.get('manual_track_id'):
-                rows = stop_track(rows, old['manual_track_id'], page.frame_number)
+            if ends_track:  # the fish being followed: deleting its box ends it here
+                rows = stop_track(rows, track, page.frame_number)
             session.save(rows)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(page, 'Box not deleted', str(exc))

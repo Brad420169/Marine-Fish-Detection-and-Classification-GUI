@@ -17,6 +17,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication
 
+import error_report
 from paths import ICON_PATH
 from style import APP_STYLE
 from pages.main_window import MainWindow
@@ -37,6 +38,7 @@ def main() -> None:
     # Use Qt browse dialogs so the shared dark theme applies on every platform.
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app = QApplication(sys.argv)
+    error_report.install()  # an error in a button shows a message instead of closing the app
     # Matches marine-fish-gui.desktop, so Linux desktops tie the window to the
     # launcher instead of showing a second, generic icon beside the pinned one.
     # Ignored on Windows and macOS, which identify the app by the lines above.

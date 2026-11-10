@@ -242,7 +242,7 @@ In **Annotate Data**, click the image to focus it, then:
 
 **Preload nearby frames** is enabled by default in the Annotations panel. After a short idle delay, it prepares the current frame and the next two video frames in the background. The label shows **SAM ready for this frame** when its features are cached. Preloading pauses during playback and cancels further queued frames when you move elsewhere or leave the page. Turn the checkbox off to save CPU and battery. A running frame encoding finishes before cancellation takes effect.
 
-The cache holds up to three frames (about 48 MiB of image features with SAM 2.1 Tiny), shares the existing model weights, and never creates annotations. A ready frame can be segmented without re-encoding it; clicking before preparation finishes or jumping beyond the cache can still take several seconds. The first use loads the model; later prompts reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species, automatically confirm frames, or track through video. The checkpoint is stored under `models/sam/`, separate from detection weights.
+The cache holds up to three frames (about 48 MiB of image features with SAM 2.1 Tiny), shares the existing model weights, and never creates annotations. A ready frame can be segmented without re-encoding it; clicking before preparation finishes or jumping beyond the cache can still take several seconds. The first use loads the model; later prompts reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species or automatically confirm frames; following a fish through video is covered under tracking below. The checkpoint is stored under `models/sam/`, separate from detection weights.
 
 ### Inspect and correct predictions
 
@@ -280,6 +280,22 @@ The **Track?** toggle follows one fish at a time. It checks up to **three frames
 5. When the fish leaves, **Delete** its box (this ends the track from that frame onward; **Ctrl+Z** restores it) or press **Finish fish** on its last frame (its box there is kept and later suggestions are removed). Either way the button returns to **Confirm & Next**.
 6. Go back and track the next fish. A track can pass through frames that were already completed: a new suggestion reopens such a frame, and once you review the box with **Next (tracking)**, or finish or delete the track, that frame is marked complete again.
 
+#### Tracking with SAM video
+
+When the SAM model is installed (`pixi run setup-sam`), steps 2–4 work differently. SAM 2's video tracker follows the fish instead of copying its box forward:
+
+- **Ticking Track? asks how many frames to track** (20 by default). SAM then works through them while a progress bar shows the current frame and the estimated time left. To keep this quick on a CPU (about a second per frame), SAM only looks at a square window around the fish, about four times its size, which follows the fish from frame to frame; if the fish swims close and fills the window, SAM restarts with a bigger one. **Stop** keeps the boxes already made.
+- **Afterwards, check the boxes** with **Next (tracking)**. Each one is a pending suggestion.
+  - **Accept a box** and SAM keeps its memory of the fish.
+  - **Correct a box** (move or resize it) before pressing Next and SAM recomputes the rest of the batch from your corrected box, with the progress bar again.
+  - **Accept the last box** of a batch and you are asked whether to track more frames.
+- **Existing boxes come first.** Each frame is checked before SAM runs. If it already has a box of the same class as the track (ignoring capitals) where the fish just was, that box is used and linked to the track, and SAM skips the frame. It does not matter what made the box: you, SAM or the detector. Boxes on another fish's track are left alone. SAM only runs on frames without such a box, starting from the last good box. If two boxes are equally close (two fish together), SAM decides. A track's class is whatever you name it, so name it the same as the detector's class (for example `fish`) for AI boxes to be used.
+- **You can start a track from any box.** Clicking an AI box (or your own) shows **Track?** for it.
+- **After Finish fish, Delete removes just the selected box.** Use it for the odd bad box in a batch; the fish's other boxes stay, and the gap is not filled in again. While you are still following the fish, deleting its box ends the track on that frame instead.
+- **When SAM decides the fish has left or is hidden**, it stops at that frame and says so. Nothing is deleted. Draw the fish again and tick **Track?** to keep following it, or go back a frame and press **Finish fish**.
+
+Without the SAM model, tracking uses the three-frame lookahead described above.
+
 When every fish is labelled, use **Confirm & Next** to complete the remaining frames. On a frame with tracked fish but outside tracking mode, Confirm & Next completes the frame and moves every track on it forward.
 
 Only untouched generated gap boxes can be recalculated or replaced by matching AI detections. Reviewed boxes are preserved; rejected detections, finished fish and deleted tracks block further lookahead. The same detection cannot be claimed by two manual tracks. A reviewed manual box already on this track remains authoritative even when an AI prediction overlaps it.
@@ -292,7 +308,7 @@ Playback, arrow keys and Skip only navigate; they do not extend the track. Futur
 
 Hold the **right mouse button and drag** a rectangle over an unwanted annotation. Model boxes whose centres fall inside that area are removed from the current and later frames of this video, regardless of predicted species. Earlier frames, manual annotations, and active tracks are preserved. Zoom and pan are supported.
 
-**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the run's reviews and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or stops its track); repeated deletions no longer trigger automatic suppression.
+**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the run's reviews and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or, for the fish you are following in tracking mode, stops its track); repeated deletions no longer trigger automatic suppression.
 
 ### Return to refreshed results
 

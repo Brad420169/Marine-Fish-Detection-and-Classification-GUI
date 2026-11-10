@@ -88,6 +88,9 @@ class ReviewPage(QWidget):
 
     def load_run(self, output_dir, video_path):
         session = self.session
+        # shutdown() also runs when a project is opened or closed; opening a run makes the
+        # page live again (otherwise SAM preloading and queued clicks stay switched off).
+        self.shutting_down = False
         self.sam.new_source()
         self.sam.schedule_preload()
         self.nav.pause()
@@ -136,6 +139,7 @@ class ReviewPage(QWidget):
         return frame if frame is not None else self.session.saved_frame_image(self.frame_number)
 
     def show_frame(self):
+        self.tracking.video.apply_deferred()
         self.sam.stop_preload()
         self.sam.frame_token += 1
         self.sam.clear(render=False)
@@ -185,9 +189,15 @@ class ReviewPage(QWidget):
         self.skip.setEnabled(idle and self.nav.next_number(1) != self.frame_number)
         self.confirm.setEnabled(idle and self.raw is not None)
         tracking = self.tracking.is_active()
-        self.confirm.setText('Next (tracking)' if tracking else 'Confirm && Next')
-        self.confirm.setToolTip('Save this fish\'s box and go to the next frame. The frame is not marked complete.'
-                                if tracking else 'Accept every box on this frame, mark it complete and go on.')
+        waiting = self.tracking.video.waiting(self.frame_number)
+        if waiting:
+            self.confirm.setEnabled(False)
+            self.confirm.setText('SAM following fish…')
+            self.confirm.setToolTip('SAM is still tracking the fish to this frame.')
+        else:
+            self.confirm.setText('Next (tracking)' if tracking else 'Confirm && Next')
+            self.confirm.setToolTip('Save this fish\'s box and go to the next frame. The frame is not marked complete.'
+                                    if tracking else 'Accept every box on this frame, mark it complete and go on.')
         self.finish_fish.setVisible(tracking)
         self.finish_fish.setEnabled(idle and self.raw is not None)
         self.play_button.setEnabled(bool(self.video_reader) and idle and self.total_frames > 1)
@@ -360,6 +370,7 @@ class ReviewPage(QWidget):
 
     def select_row(self, row, col):
         self.frame.selected = row
+        self.tracking.offer(self.current()[row])
         self.render()
 
     def select_annotation(self, row, _col=0):
@@ -373,6 +384,7 @@ class ReviewPage(QWidget):
         self.table.selectRow(index)
         self.table.scrollTo(self.table.model().index(index, 2))
         self.image.setFocus()
+        self.tracking.offer(self.current()[index])  # any saved box, AI or manual, can be tracked
         self.render()
 
     # Drawn boxes (Annotations panel)
@@ -485,7 +497,7 @@ class ReviewPage(QWidget):
         else:
             self.status.setText(f'Saved "{species}" on frame {self.frame_number}. '
                                 'Confirm the frame, then open Results to update the summary and charts.')
-        self.tracking.offer(new['annotation_id'])
+        self.tracking.offer(new)
         self.update_controls()
         self.render()
         self.image.setFocus()
@@ -592,15 +604,17 @@ class ReviewPage(QWidget):
         handled = shortcuts.route(self, obj, event)
         return super().eventFilter(obj, event) if handled is None else handled
 
+    def has_unsaved_edits(self):
+        return (self.sam.active or bool(self.frame.pending) or bool(self.frame.box_edits)
+                or any(a['species'] != b['species']
+                       or (a['review_status'] != b['review_status'] and b['review_status'] != 'pending')
+                       or (b['review_status'] == 'pending' and a['review_status'] != 'confirmed')
+                       for a, b in zip(self.drafts(), self.current())))
+
     def discard_ok(self):
         if self.sam.worker:
             return False
-        changed = (self.sam.active or bool(self.frame.pending) or bool(self.frame.box_edits)
-                   or any(a['species'] != b['species']
-                          or (a['review_status'] != b['review_status'] and b['review_status'] != 'pending')
-                          or (b['review_status'] == 'pending' and a['review_status'] != 'confirmed')
-                          for a, b in zip(self.drafts(), self.current())))
-        return not changed or QMessageBox.question(
+        return not self.has_unsaved_edits() or QMessageBox.question(
             self, 'Unsaved edits', 'Leave this frame and discard unconfirmed edits?') == QMessageBox.StandardButton.Yes
 
     def save_interval(self, value):
@@ -818,6 +832,7 @@ class ReviewPage(QWidget):
 
     def shutdown(self):
         self.shutting_down = True
+        self.tracking.video.shutdown()
         self.sam.shutdown()
         self.nav.pause()
         self._layout_timer.stop()

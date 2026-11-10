@@ -2,12 +2,18 @@
 
 The track bookkeeping (lookahead, gap filling, ending a track) is in review_tracks.py;
 this class owns the page-side state: which fish is being followed, the Track? prompt,
-Next (tracking), Finish fish, and SAM adjustment of suggested boxes.
+Next (tracking), Finish fish, and SAM adjustment of suggested boxes. When the SAM model
+is installed, SAM's video tracker supplies the boxes instead (video_follow.py).
 """
 from PyQt6.QtWidgets import QMessageBox
 
-from review_io import review_box
-from review_tracks import COPIED, GENERATED, advance_tracks, create_track, end_track
+from review_io import box_identity, original_box, review_box
+from review_tracks import COPIED, INTERPOLATED, advance_tracks, create_track, end_track
+
+from annotation.video_follow import VideoFollow
+
+# Lookahead boxes SAM's image model may refit when their frame opens (not SAM video boxes).
+REFITTABLE = (INTERPOLATED, COPIED)
 
 
 class TrackingController:
@@ -16,30 +22,33 @@ class TrackingController:
     def __init__(self, page):
         self.page = page
         self.active = None              # track id followed by Next (tracking)
-        self.prompt_annotation = None   # just-saved annotation the Track? prompt refers to
+        self.prompt_key = None          # the box the Track? prompt refers to (see _row_key)
         self.reopened = set()           # completed frames a suggestion reopened
         self.adjusted = set()           # suggested boxes SAM already tried once
+        self.video = VideoFollow(page)
 
     def reset(self):
+        self.video.new_source()
         self.active = None
-        self.prompt_annotation = None
+        self.prompt_key = None
         self.reopened = set()
         self.adjusted = set()
 
     # Track? prompt
 
-    def offer(self, annotation_id):
-        """Show the Track? prompt for a box that was just saved."""
-        self.prompt_annotation = annotation_id
+    def offer(self, row):
+        """Show the Track? prompt for a saved box (just saved, or clicked)."""
+        self.prompt_key = None if row.get('review_status') == 'rejected' else _row_key(row)
 
     def hide_prompt(self):
-        self.prompt_annotation = None
+        self.prompt_key = None
         self.page.track_prompt.hide()
 
     def _prompt_source(self):
+        if self.prompt_key is None:
+            return None
         return next((row for row in self.page.current()
-                     if row.get('annotation_id') == self.prompt_annotation
-                     and row.get('review_status') != 'rejected'), None)
+                     if _row_key(row) == self.prompt_key and row.get('review_status') != 'rejected'), None)
 
     def position_prompt(self):
         page = self.page
@@ -63,11 +72,16 @@ class TrackingController:
         if source is None:
             page.track_prompt.hide()
             return
+        start = None
         try:
             rows = page.session.rows
-            if enabled and not source.get('manual_track_id'):
-                rows, self.active = create_track(rows, self.prompt_annotation)
-            elif not enabled and source.get('manual_track_id'):
+            if enabled:
+                start = review_box(source)
+                if source.get('manual_track_id'):
+                    self.active = source['manual_track_id']  # already tracked: follow it from this box
+                else:
+                    rows, self.active = create_track(rows, source)
+            elif source.get('manual_track_id'):
                 if source['manual_track_id'] == self.active:
                     self.active = None
                 rows = [dict(row, manual_track_id='', track_keyframe='')
@@ -78,6 +92,8 @@ class TrackingController:
             self.position_prompt()
             return
         page.undo_stack.clear()
+        if enabled and self.video.enabled and self.active and start is not None:
+            self.video.follow(page.frame_number, start, ask=True)  # asks how many frames, then tracks them
         self.position_prompt()
         page.update_controls()
         page.image.setFocus()
@@ -103,11 +119,21 @@ class TrackingController:
         self.restore_reopened()
         if number >= page.total_frames or not page.video_reader:
             self.active = None
+            self.video.stop()
             page.show_frame()
             page.status.setText('End of the video. Tracking finished.')
             return
+        accepted = next((r for r in page.session.frame_rows(number)
+                         if r.get('manual_track_id') == self.active and r.get('review_status') != 'rejected'), None)
+        if accepted and self.video.enabled:
+            self.video.follow(number, review_box(accepted))
         page.nav.advance()
-        if self.active and not self.is_active():
+        if self.video.following(self.active):
+            if page.frame_number == self.video.lost_at:
+                page.status.setText(self.video.lost_message())
+            elif self.video.waiting(page.frame_number):
+                page.status.setText('SAM is following the fish to this frame…')
+        elif self.active and not self.is_active():
             page.status.setText('The track stopped before this frame (competing AI boxes or a rejected detection). '
                                 'Draw this fish and tick Track? to follow it again, or carry on with Confirm & Next.')
 
@@ -117,6 +143,7 @@ class TrackingController:
         track, number = self.active, page.frame_number
         if not track or not page.save_frame(complete=False, track=track, advance=False):
             return
+        self.video.stop()
         try:
             page.session.save(end_track(page.session.rows, track, number))
         except OSError as exc:
@@ -132,10 +159,13 @@ class TrackingController:
     def box_deleted(self, row):
         if row.get('manual_track_id') and row['manual_track_id'] == self.active:
             self.active = None
+            self.video.stop()
 
     def look_ahead(self, rows, track=None):
         """Suggest this frame's tracks on the next frames (only ``track`` in tracking mode)."""
         page = self.page
+        if track and self.video.enabled:
+            return rows  # SAM's video tracker supplies this fish's boxes
         number = page.frame_number
         completed = page.session.completed_frames()
         rows = advance_tracks(rows, number, page.total_frames if page.video_reader else number,
@@ -170,7 +200,7 @@ class TrackingController:
             return
         edits = page.frame.box_edits
         boxes = [(row['annotation_id'], review_box(row)) for index, row in enumerate(page.current())
-                 if row.get('manual_track_id') and row.get('track_keyframe') in GENERATED
+                 if row.get('manual_track_id') and row.get('track_keyframe') in REFITTABLE
                  and row.get('review_status') == 'pending' and index not in edits
                  and row['annotation_id'] not in self.adjusted]
         if boxes:
@@ -187,7 +217,7 @@ class TrackingController:
             if identity not in by_id:
                 continue
             index, row = by_id[identity]
-            if (row.get('track_keyframe') not in GENERATED or row.get('review_status') != 'pending'
+            if (row.get('track_keyframe') not in REFITTABLE or row.get('review_status') != 'pending'
                     or index in edits or identity in self.adjusted):
                 continue
             copied = row.get('track_keyframe') == COPIED
@@ -209,3 +239,10 @@ class TrackingController:
         if failures:
             message += f' {len(failures)} boxes kept their copied position; adjust or delete them manually. {failures[0]}'
         page.status.setText(message.strip())
+
+
+def _row_key(row):
+    """Identifies a saved box across saves: its annotation id, or an AI box's frame and original position."""
+    if row.get('annotation_id'):
+        return row['annotation_id']
+    return ('model', row['frame_number'], box_identity(original_box(row)))
