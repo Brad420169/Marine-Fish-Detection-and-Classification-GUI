@@ -28,21 +28,24 @@ def model_row(session, number, detection, image):
 
 
 def keep_untouched_pending(current, drafts, edited, track=None):
-    """For a save that does not complete the frame, leave untouched pending boxes pending.
+    """Leave untouched pending boxes pending when a frame is saved.
 
     A box counts as touched when its species, position or decision changed, or it
-    belongs to the fish being tracked (``track``), whose box is accepted.
+    belongs to the fish being tracked (``track``), whose box Next (tracking) accepts.
     """
-    return [draft if (draft['species'] != old['species'] or index in edited
-                      or draft['review_status'] == 'rejected'
-                      or old.get('review_status') != 'pending'
-                      or (track and old.get('manual_track_id') == track)) else dict(old)
-            for index, (old, draft) in enumerate(zip(current, drafts))]
+    result = []
+    for index, (old, draft) in enumerate(zip(current, drafts)):
+        if track and old.get('manual_track_id') == track and draft['review_status'] == 'pending':
+            draft = dict(draft, review_status='confirmed')
+        touched = (draft['species'] != old['species'] or index in edited or draft['review_status'] != 'pending'
+                   or old.get('review_status') != 'pending')
+        result.append(draft if touched else dict(old))
+    return result
 
 
-def mark_reviewed(drafts, complete):
+def mark_reviewed(drafts):
     for row in drafts:
-        if complete or row['review_status'] != 'pending':
+        if row['review_status'] != 'pending':
             row['reviewed'] = 'yes'
 
 

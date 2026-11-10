@@ -43,6 +43,20 @@ def route(page, obj, event):
     if event.type() != QEvent.Type.KeyPress:
         return None
     key, modifiers = event.key(), event.modifiers()
+    if page.tracking.multi is not None and modifiers == NONE and not _typing(obj, QLineEdit):
+        if key in ENTER:
+            if not event.isAutoRepeat():
+                page.tracking.track_selected()
+            return True
+        if key == Qt.Key.Key_Escape:
+            page.tracking.cancel_multi()
+            return True
+    if modifiers == NONE and key in ENTER and _in_pending_field(page, obj):
+        # Enter in a drawn box's species field saves every named box, even while
+        # another fish is outlined.
+        if not event.isAutoRepeat():
+            page.save_named_boxes()
+        return True
     if sam.active:
         handled = _sam_preview_key(page, obj, event)
         if handled is not _CONTINUE:
@@ -68,7 +82,7 @@ def route(page, obj, event):
         return True
     if modifiers == NONE and key in ENTER and not _typing(obj, QLineEdit):
         if not event.isAutoRepeat():
-            page.confirm_frame()
+            page.next_frame()
         return True
     return None
 
@@ -85,7 +99,7 @@ def _sam_preview_key(page, obj, event):
         # otherwise the same event can also confirm the whole frame.
         if key in ENTER:
             if not event.isAutoRepeat():
-                page.sam.finish()
+                page.save_named_boxes()
             return True
         return None
     if key in ENTER:
@@ -96,16 +110,20 @@ def _sam_preview_key(page, obj, event):
     return _CONTINUE
 
 
-def _enter_in_species_field(page, obj, event):
-    """Qt can deliver Enter to the editable combo or its line edit; own it here for both,
+def _in_pending_field(page, obj):
+    """Qt can deliver Enter to the editable combo or its line edit; own it for both,
     before saving destroys the pending editor and moves focus."""
     focus = QApplication.focusWidget()
     for index in range(len(page.frame.pending)):
         editor = page.annotations.cellWidget(index, 0)
         if obj in (editor, editor.lineEdit()) or focus in (editor, editor.lineEdit()):
-            if not event.isAutoRepeat():
-                page.commit_box(index)
             return True
+    return False
+
+
+def _enter_in_species_field(page, obj, event):
+    """Enter in a saved row's species field accepts the name as a draft."""
+    focus = QApplication.focusWidget()
     for index in range(page.table.rowCount()):
         editor = page.table.cellWidget(index, 2)
         if obj in (editor, editor.lineEdit()) or focus in (editor, editor.lineEdit()):

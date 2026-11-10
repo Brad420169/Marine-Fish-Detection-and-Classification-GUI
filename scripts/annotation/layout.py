@@ -116,7 +116,7 @@ def _annotations_panel(page):
     page.sam_class = QLineEdit()
     page.sam_class.setPlaceholderText('Active fish species, Enter')
     page.sam_class.setAccessibleName('SAM annotation class name')
-    page.sam_class.returnPressed.connect(page.sam.finish)
+    page.sam_class.returnPressed.connect(page.save_named_boxes)
     sam_layout.addWidget(page.sam_class)
     layout.addWidget(page.sam_panel)
     page.sam_panel.hide()
@@ -130,6 +130,13 @@ def _annotations_panel(page):
     page.annotations.cellClicked.connect(page.select_annotation)
     page.annotations.horizontalHeader().setStretchLastSection(True)
     layout.addWidget(page.annotations, 1)
+    page.multi_button = QPushButton('Track multiple fish')
+    page.multi_button.setIcon(icon('play'))
+    page.multi_button.setToolTip('Click this, click each fish you want, then press Enter. You are asked for how '
+                                 'many seconds once, and SAM tracks the fish one after another.')
+    page.multi_button.setStyleSheet('QPushButton { padding: 6px 4px; }')  # the panel is narrow
+    page.multi_button.clicked.connect(lambda: page.tracking.multi_clicked())
+    layout.addWidget(page.multi_button)
     layout.addWidget(_track_prompt(page, panel))
     return panel
 
@@ -137,8 +144,11 @@ def _annotations_panel(page):
 def _track_prompt(page, parent):
     page.track_prompt = QWidget(parent)
     page.track_prompt.setStyleSheet('background: #073047; color: white; border-radius: 4px;')
-    row = QHBoxLayout(page.track_prompt)
-    row.setContentsMargins(5, 2, 5, 2)
+    column = QVBoxLayout(page.track_prompt)
+    column.setContentsMargins(5, 2, 5, 4)
+    column.setSpacing(4)
+    row = QHBoxLayout()
+    column.addLayout(row)
     row.addWidget(QLabel('Track?'))
     page.track_yes = button(row, '', lambda: page.tracking.set_saved(True))
     page.track_no = button(row, '', lambda: page.tracking.set_saved(False))
@@ -150,6 +160,14 @@ def _track_prompt(page, parent):
         widget.setCheckable(True)
         widget.setFixedSize(30, 28)
         widget.setStyleSheet('QPushButton { padding: 0; } QPushButton:checked { border: 2px solid #46d8ff; }')
+    # Shown for a tracked fish with unchecked boxes: accepts all of them at once.
+    page.confirm_track = QPushButton('Confirm track')
+    page.confirm_track.setIcon(icon('check'))
+    page.confirm_track.setToolTip("Accept all of this fish's unchecked boxes and finish its track. "
+                                  'Fix any wrong boxes first.')
+    page.confirm_track.setStyleSheet('QPushButton { background: #1c7a5e; color: white; padding: 3px 8px; }')
+    page.confirm_track.clicked.connect(lambda: page.tracking.confirm_prompted())
+    column.addWidget(page.confirm_track)
     page.track_prompt.hide()
     return page.track_prompt
 
@@ -228,12 +246,12 @@ def _navigation(page):
     nav = QHBoxLayout()
     page.back = button(nav, 'Back to Results', page.leave)
     page.previous = button(nav, 'Previous', lambda: page.nav.go(-1))
-    page.skip = button(nav, 'Skip', lambda: page.nav.go(1))
+    page.previous.setToolTip('Save your edits on this frame and go back one frame (Left arrow).')
     page.finish_fish = button(nav, 'Finish fish', page.tracking.finish)
     page.finish_fish.setToolTip('Stop following this fish here. Its box on this frame is kept; '
-                                'later suggestions are removed. Confirm && Next returns.')
+                                'later suggestions are removed.')
     page.finish_fish.hide()
-    page.confirm = button(nav, 'Confirm && Next', page.confirm_frame)
-    page.confirm.setIcon(icon('arrow_right'))
-    page.confirm.setObjectName('confirmButton')
+    page.next_button = button(nav, 'Next', page.next_frame)
+    page.next_button.setIcon(icon('arrow_right'))
+    page.next_button.setObjectName('confirmButton')
     return nav

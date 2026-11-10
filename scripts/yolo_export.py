@@ -11,8 +11,14 @@ import review_store
 from review_summary import merge_detections
 
 
+def checked(row):
+    """A box a person accepted: ticked, drawn, fixed or in a confirmed track."""
+    return row.get('review_status') == 'confirmed' and (
+        row.get('reviewed') == 'yes' or row.get('annotation_source') == 'manual')
+
+
 def reviewed_frames(root):
-    """(original detections, review rows, fully reviewed frame numbers) for a run."""
+    """(original detections, review rows, numbers of frames with at least one checked box)."""
     root = Path(root)
     source = root / 'original_detections.json'
     if not source.is_file() or not review_store.exists(root):
@@ -21,13 +27,13 @@ def reviewed_frames(root):
     total = int(original.get('total_frames', 0))
     with review_store.ReviewStore(root) as store:
         rows = store.load()
-        verified = sorted(n for n in store.completed_frames() if 1 <= n <= total)
+    verified = sorted({int(r['frame_number']) for r in rows if checked(r) and 1 <= int(r['frame_number']) <= total})
     return original, rows, verified
 
 
 def split_counts(total, train_percent, val_percent):
     if total < 3 or not 1 <= val_percent or not 1 <= train_percent or train_percent + val_percent >= 100:
-        raise ValueError('Use at least three reviewed frames and leave room for all three splits.')
+        raise ValueError('Check boxes on at least three frames, and leave room for all three splits.')
     train = max(1, min(total - 2, round(total * train_percent / 100)))
     val = max(1, min(total - train - 1, round(total * val_percent / 100)))
     return train, val, total - train - val

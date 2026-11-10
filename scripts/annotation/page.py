@@ -108,7 +108,7 @@ class ReviewPage(QWidget):
         self.image.reset_view()
         try:
             has_names = session.load_rows()
-            self.status.setText('Ready. Changes are saved when you confirm the frame.' if has_names else
+            self.status.setText('Ready. Tick or cross each AI box; edits save when you move frames.' if has_names else
                                 'Saved decisions are loaded. Older runs may have an incomplete species list.')
         except (OSError, ValueError, KeyError) as exc:
             session.rows, session.names = [], []
@@ -144,16 +144,16 @@ class ReviewPage(QWidget):
         self.sam.frame_token += 1
         self.sam.clear(render=False)
         self.tracking.hide_prompt()
+        self.tracking.cancel_multi(quiet=True)  # choosing fish is for one frame
         self.editor.reset()
         self.loading = True
         self.table.setRowCount(0)
         self.annotations.setRowCount(0)
         self.canvas = None
         rows = self.current()
-        # A row is confirmed unless it is crossed out, so an untouched frame can be
-        # accepted wholesale with Confirm & Next.
-        self.frame = FrameState(decisions=['rejected' if row['review_status'] == 'rejected' else 'confirmed'
-                                           for row in rows])
+        # Ticks and crosses are saved as they are clicked, so the buttons show the saved status.
+        self.frame = FrameState(decisions=[row['review_status'] if row['review_status'] in ('confirmed', 'rejected')
+                                           else 'pending' for row in rows])
         for i, row in enumerate(rows):
             self.add_table_row(i, row)
             self.table.setRowHidden(i, row.get('reviewed') == 'yes')
@@ -173,12 +173,10 @@ class ReviewPage(QWidget):
 
     def update_controls(self):
         session = self.session
-        summary = f'{session.review_complete_count} of {len(session.flagged_frames)} flagged frames reviewed'
-        if session.manual_session and session.root:
-            try:
-                summary = f'{len(session.completed_frames())} frames complete • interval {session.frame_interval}'
-            except (OSError, ValueError, KeyError):
-                summary = 'Completion unavailable'
+        if session.manual_session:
+            summary = f'{len(session.rows)} fish annotations'
+        else:
+            summary = f'reviewed fish annotations {session.ai_reviewed} / {session.ai_total}'
         flagged = ' • flagged' if self.frame_number in session.flagged_frames else ''
         zoom = f' • {self.image.zoom:.1f}× zoom' if self.image.zoom > 1 else ''
         self.progress.setText(
@@ -186,18 +184,18 @@ class ReviewPage(QWidget):
             f'{session.timestamp(self.frame_number)}{flagged}{zoom} • {summary}')
         idle = not self.worker
         self.previous.setEnabled(idle and self.nav.next_number(-1) != self.frame_number)
-        self.skip.setEnabled(idle and self.nav.next_number(1) != self.frame_number)
-        self.confirm.setEnabled(idle and self.raw is not None)
         tracking = self.tracking.is_active()
-        waiting = self.tracking.video.waiting(self.frame_number)
-        if waiting:
-            self.confirm.setEnabled(False)
-            self.confirm.setText('SAM following fish…')
-            self.confirm.setToolTip('SAM is still tracking the fish to this frame.')
+        self.next_button.setEnabled(idle and (tracking or self.nav.next_number(1) != self.frame_number))
+        if self.tracking.video.waiting(self.frame_number):
+            self.next_button.setEnabled(False)
+            self.next_button.setText('SAM following fish…')
+            self.next_button.setToolTip('SAM is still tracking the fish to this frame.')
         else:
-            self.confirm.setText('Next (tracking)' if tracking else 'Confirm && Next')
-            self.confirm.setToolTip('Save this fish\'s box and go to the next frame. The frame is not marked complete.'
-                                    if tracking else 'Accept every box on this frame, mark it complete and go on.')
+            self.next_button.setText('Next (tracking)' if tracking else 'Next')
+            self.next_button.setToolTip("Accept this fish's box and go to the next frame." if tracking else
+                                        'Save your edits on this frame and go to the next one (Right arrow).')
+        self.multi_button.setEnabled(idle and self.raw is not None and self.tracking.video.enabled
+                                     and self.frame_number < self.total_frames)
         self.finish_fish.setVisible(tracking)
         self.finish_fish.setEnabled(idle and self.raw is not None)
         self.play_button.setEnabled(bool(self.video_reader) and idle and self.total_frames > 1)
@@ -211,6 +209,8 @@ class ReviewPage(QWidget):
             copy = dict(row)
             copy['species'] = self.table.cellWidget(i, 2).currentText().strip()
             copy['review_status'] = self.frame.decisions[i]
+            if copy['review_status'] == 'pending' and (i in self.frame.box_edits or copy['species'] != row['species']):
+                copy['review_status'] = 'confirmed'  # fixing a box counts as checking it
             if i in self.frame.box_edits:
                 if copy.get('annotation_source') != 'manual' and not copy.get('original_bbox'):
                     copy['original_bbox'] = json.dumps(original_box(row))
@@ -244,6 +244,9 @@ class ReviewPage(QWidget):
         rows = self.all_rows()
         selected = self.frame.selected
         self.canvas = draw_review(self.raw, rows, selected, self.frame_context(), by_source=True)
+        for row in self.tracking.multi_rows():  # fish chosen for Track multiple fish
+            x1, y1, x2, y2 = (round(float(row[k])) for k in ('x1', 'y1', 'x2', 'y2'))
+            cv2.rectangle(self.canvas, (x1 - 3, y1 - 3), (x2 + 3, y2 + 3), (246, 216, 69), 3)
         if self.sam.mask is not None:
             # Native uint8 blending avoids large float64 arrays for full-resolution masks.
             tint = np.empty_like(self.canvas)
@@ -327,11 +330,40 @@ class ReviewPage(QWidget):
         return holder
 
     def set_decision(self, index, status):
-        self.frame.decisions[index] = status
+        """A tick or cross in the table, saved straight away."""
+        self.nav.pause()
         self.frame.selected = index
         self.table.selectRow(index)
-        self.style_decision(index)
+        if status == 'rejected':
+            self.editor.delete_selected()  # same as Delete: saved, Ctrl+Z restores it
+        else:
+            self.confirm_row(index)
+        self._restore_decision(index)  # buttons show the saved decision, even if saving was cancelled
         self.render()
+
+    def confirm_row(self, index):
+        """Tick: save this box as checked, with any species or position change made to it."""
+        if self.worker or self.sam.worker:
+            return
+        old, draft = self.current()[index], self.drafts()[index]
+        if not draft['species']:
+            QMessageBox.warning(self, 'Species required', 'Choose or enter a species name first.')
+            return
+        if draft['species'] not in self.session.names and QMessageBox.question(
+                self, 'Unknown species', f'"{draft["species"]}" is not in the available species list. Save it anyway?'
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        draft.update(review_status='confirmed', reviewed='yes')
+        try:
+            self.session.save([draft if r is old else r for r in self.session.rows])
+        except OSError as exc:
+            QMessageBox.critical(self, 'Box not saved', str(exc))
+            return
+        self.session.add_names([draft['species']])
+        self.frame.decisions[index] = 'confirmed'
+        self.frame.box_edits.pop(index, None)
+        self.status.setText(f'Checked {draft["species"]}.')
+        self.update_controls()
 
     def style_decision(self, index):
         """Strike out a crossed row so it reads as removed before it is saved."""
@@ -345,13 +377,17 @@ class ReviewPage(QWidget):
         self.table.cellWidget(index, 2).setEnabled(not rejected)
         caption = self.table.cellWidget(index, 3).caption
         row = self.current()[index]
+        decision = self.frame.decisions[index]
         if rejected:
-            text = ('Track stopped' if row.get('manual_track_id') else
-                    'Annotation deleted' if row.get('annotation_source') == 'manual' else 'Removed — not a fish')
+            text, colour = ('Track stopped' if row.get('manual_track_id') else
+                            'Annotation deleted' if row.get('annotation_source') == 'manual' else 'Removed — not a fish',
+                            '#dd6675')
+        elif decision == 'pending':
+            text, colour = 'Not checked yet', '#e0b44c'
         else:
-            text = 'Confirmed'
+            text, colour = 'Checked', '#36b88e'
         caption.setText(text)
-        caption.setStyleSheet(f"color: {'#dd6675' if rejected else '#36b88e'};")
+        caption.setStyleSheet(f'color: {colour};')
 
     def species_box(self, text=''):
         species = SpeciesComboBox()
@@ -448,7 +484,7 @@ class ReviewPage(QWidget):
 
     def commit_box(self, index, track=None):
         """Save one drawn box immediately, so pressing Enter moves it straight into the
-        reviewed-species table instead of waiting for Confirm & Next."""
+        reviewed-species table."""
         self.nav.pause()
         if self.worker or index < 0 or self.raw is None:
             return
@@ -492,15 +528,36 @@ class ReviewPage(QWidget):
         self.table.selectRow(position)
         self.loading = False
         if track:
-            self.status.setText('Tracking this fish. Next (tracking) saves its box and moves on without marking the '
-                                'frame complete; SAM adjusts each suggested box. Finish fish or Delete stops tracking.')
+            self.status.setText('Tracking this fish. Next (tracking) accepts its box and moves on. '
+                                'Finish fish or Delete stops tracking.')
         else:
-            self.status.setText(f'Saved "{species}" on frame {self.frame_number}. '
-                                'Confirm the frame, then open Results to update the summary and charts.')
+            self.status.setText(f'Saved "{species}" on frame {self.frame_number}. Tick Track? to follow it.')
         self.tracking.offer(new)
         self.update_controls()
         self.render()
         self.image.setFocus()
+
+    def save_named_boxes(self):
+        """Enter in any species field: save the outlined fish (if named) and every drawn
+        box that has a species. Unnamed boxes stay for you to name."""
+        if self.worker or self.sam.worker:
+            return
+        before = len(self.session.rows)
+        if self.sam.active and self.sam.mask is not None and self.sam_class.text().strip():
+            self.sam.finish()
+        for index in reversed(range(len(self.frame.pending))):
+            if self.annotations.cellWidget(index, 0).currentText().strip():
+                self.commit_box(index)
+        saved = len(self.session.rows) - before
+        unnamed = len(self.frame.pending) + (1 if self.sam.active else 0)
+        if saved and unnamed:
+            self.status.setText(f'Saved {saved} box{"es" if saved != 1 else ""}. '
+                                f'{unnamed} still need{"s" if unnamed == 1 else ""} a species name.')
+        elif saved > 1:
+            self.status.setText(f'Saved {saved} boxes. Click a box and tick Track? to follow that fish.')
+        elif not saved and unnamed:
+            self.status.setText('Type a species name for the box, then press Enter.')
+            (self.sam_class if self.sam.active else self.annotations.cellWidget(0, 0)).setFocus()
 
     # Undo
 
@@ -557,7 +614,7 @@ class ReviewPage(QWidget):
             self.table.selectRow(index)
         self.undo_stack.pop()
         self.image.setFocus()
-        self.status.setText('Deletion undone. The frame has not been confirmed.')
+        self.status.setText('Deletion undone.')
         self.update_controls()
         self.render()
 
@@ -606,16 +663,13 @@ class ReviewPage(QWidget):
 
     def has_unsaved_edits(self):
         return (self.sam.active or bool(self.frame.pending) or bool(self.frame.box_edits)
-                or any(a['species'] != b['species']
-                       or (a['review_status'] != b['review_status'] and b['review_status'] != 'pending')
-                       or (b['review_status'] == 'pending' and a['review_status'] != 'confirmed')
-                       for a, b in zip(self.drafts(), self.current())))
+                or any(a['species'] != b['species'] for a, b in zip(self.drafts(), self.current())))
 
     def discard_ok(self):
         if self.sam.worker:
             return False
         return not self.has_unsaved_edits() or QMessageBox.question(
-            self, 'Unsaved edits', 'Leave this frame and discard unconfirmed edits?') == QMessageBox.StandardButton.Yes
+            self, 'Unsaved edits', 'Leave this frame and discard unsaved edits?') == QMessageBox.StandardButton.Yes
 
     def save_interval(self, value):
         try:
@@ -627,42 +681,37 @@ class ReviewPage(QWidget):
 
     # Saving
 
-    def confirm_frame(self):
+    def next_frame(self):
+        """Next button and Enter: in tracking mode accept the fish's box, then move on."""
         if self.tracking.is_active():
             self.tracking.next()
         else:
-            self.save_frame(complete=True)
+            self.nav.go(1)
 
-    def save_frame(self, complete, track=None, advance=True):
-        """Save this frame's edits; with ``complete`` also mark it reviewed and move on.
+    def save_frame(self, track=None, advance=True, refresh=True):
+        """Save this frame's edits. Boxes nobody touched keep their status.
 
         With ``track``, that fish's box on this frame is accepted and only its track
-        looks ahead; the frame itself is not marked complete. Returns True when the
-        edits are saved (or there were none) and the caller may continue.
+        looks ahead. ``refresh`` redraws the frame afterwards (off when moving on).
+        Returns True when the edits are saved (or there were none) and the caller may continue.
         """
         self.nav.pause()
         if self.worker or self.sam.worker:
             return False
         if self.sam.active:
             self.sam_class.setFocus()
-            self.status.setText('Enter a class and create the SAM box, or cancel SAM before confirming the frame.')
+            self.status.setText('Enter a class and create the SAM box, or press Esc to cancel it, first.')
             return False
         if self.raw is None:
             return True
         session, frame, current = self.session, self.frame, self.current()
         drafts, pending = self.drafts(), self.pending_rows()
-        if not complete:
-            drafts = saving.keep_untouched_pending(current, drafts, frame.box_edits, track)
-            if not pending and drafts == current and not track:
-                return True
+        drafts = saving.keep_untouched_pending(current, drafts, frame.box_edits, track)
+        if not pending and drafts == current and not track:
+            return True
         tracked = any(row.get('manual_track_id') for row in current) or \
             any(self.pending_tracked(i) for i in range(len(frame.pending)))
-        if (complete or track) and tracked and session.frame_interval != 1 and not self.save_interval(1):
-            return False
-        if not drafts and not pending:
-            if self.record_frame_completion():
-                self.undo_stack.clear()
-                self.nav.advance()
+        if track and tracked and session.frame_interval != 1 and not self.save_interval(1):
             return False
         if any(not r['species'] for r in drafts if r['review_status'] != 'rejected'):
             QMessageBox.warning(self, 'Species required', 'Choose or enter a species name, or cross the row out to drop it.')
@@ -675,7 +724,7 @@ class ReviewPage(QWidget):
                 self, 'Unknown species', 'These names are not in the available species list. Save them anyway?\n\n'
                 + '\n'.join(unknown)) != QMessageBox.StandardButton.Yes:
             return False
-        saving.mark_reviewed(drafts, complete)
+        saving.mark_reviewed(drafts)
         additions = []
         if pending:
             try:
@@ -691,15 +740,14 @@ class ReviewPage(QWidget):
                                                    [row[k] for k in ('x1', 'y1', 'x2', 'y2')], image, track_id))
         rows = saving.merge_frame(session.rows, current, drafts, additions)
         try:
-            if (complete or (track and advance)) and any(
+            if track and advance and any(
                     r.get('manual_track_id') and int(r['frame_number']) == self.frame_number for r in rows):
                 rows = self.tracking.look_ahead(rows, track)
         except ValueError as exc:
             QMessageBox.warning(self, 'Track not saved', str(exc))
             return False
         try:
-            # A completed frame's boxes and its completion are saved together.
-            session.save(rows, complete=self.frame_number if complete else None)
+            session.save(rows)
         except OSError as exc:
             QMessageBox.critical(self, 'Changes not saved', str(exc))
             return False
@@ -708,12 +756,9 @@ class ReviewPage(QWidget):
         self.annotations.setRowCount(0)
         self.undo_stack.clear()
         session.add_names(r['species'] for r in pending)
-        if not complete:
-            if not track:
-                self.show_frame()
-            return True
         self._write_reviewed_image()
-        self.nav.advance()
+        if refresh and not track:
+            self.show_frame()
         return True
 
     def _write_reviewed_image(self):
@@ -726,19 +771,10 @@ class ReviewPage(QWidget):
             if not cv2.imwrite(str(temporary), draw_review(self.raw, self.current(), context=self.frame_context())):
                 raise OSError('Could not write reviewed image.')
             temporary.replace(target)
-            self.status.setText('Frame complete. Ready for dataset export.' if session.manual_session else
-                                'Frame confirmed. Results will update when you leave Annotate Data.')
+            self.status.setText('Saved. Ready for dataset export.' if session.manual_session else
+                                'Saved. Results will update when you leave Annotate Data.')
         except OSError as exc:
-            self.status.setText(f'CSV saved; reviewed image failed: {exc}. You can confirm again to retry.')
-
-    def record_frame_completion(self):
-        try:
-            self.session.record_completion(self.frame_number)
-            return True
-        except (OSError, ValueError, KeyError) as exc:
-            QMessageBox.critical(self, 'Frame completion not saved',
-                                 f'This frame could not be marked complete: {exc}. Confirm it again to retry.')
-            return False
+            self.status.setText(f'Edits saved; reviewed image failed: {exc}.')
 
     # Leaving the page
 
@@ -767,7 +803,7 @@ class ReviewPage(QWidget):
                                     'Discard the SAM preview and leave?') != QMessageBox.StandardButton.Yes:
                 return False
             self.sam.clear()
-        if self.worker or self.sam.worker or not self.save_frame(complete=False):
+        if self.worker or self.sam.worker or not self.save_frame(refresh=False):
             return False
         root = self.session.root
         if root and not self.session.manual_session and results_need_refresh(root):
@@ -777,7 +813,7 @@ class ReviewPage(QWidget):
 
     def _start_job(self, worker, message):
         self.worker = worker
-        for widget in (self.back, self.previous, self.skip, self.confirm, self.table, self.annotations):
+        for widget in (self.back, self.previous, self.next_button, self.table, self.annotations):
             widget.setEnabled(False)
         self.status.setText(message)
         worker.finished.connect(self.job_finished)

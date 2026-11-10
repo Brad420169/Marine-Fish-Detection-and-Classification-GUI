@@ -106,7 +106,7 @@ class ProjectOverview(QWidget):
                 try:
                     from yolo_export import reviewed_frames
                     _, _, numbers = reviewed_frames(item['path'])
-                    status += f" · {len(numbers)} frames complete"
+                    status += f" · {len(numbers)} frames with checked boxes"
                 except (OSError, ValueError, KeyError):
                     status += ' · source unavailable'
             row = QFrame(); row.setObjectName('overviewWork')

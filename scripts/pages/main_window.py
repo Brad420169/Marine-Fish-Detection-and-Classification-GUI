@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ocean_ui import OceanShell
 from paths import ICON_PATH
-from widgets import VideoPathRow, WeightsRow, LabeledSlider
+from widgets import VideoPathRow, WeightsRow, LabeledNumber
 from charts import _read_summary_csv
 from review_summary import results_need_refresh
 from pipeline import RunConfig
@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Detect Fish")
         title.setObjectName("pageTitle")
         root.addWidget(title)
-        subtitle = QLabel("Select your video and model, configure settings, and start detecting fish.")
+        subtitle = QLabel("Select your video and model, check the settings, then start detecting fish.")
         subtitle.setObjectName("muted")
         root.addWidget(subtitle)
         self.input_cards = QBoxLayout(QBoxLayout.Direction.LeftToRight)
@@ -136,33 +136,20 @@ class MainWindow(QMainWindow):
         settings_group = QGroupBox("3. Detection Settings")
         settings_group.setMinimumHeight(220)
         settings_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
         settings_layout = QVBoxLayout(settings_group)
-        settings_layout.setSpacing(8)
+        settings_layout.setSpacing(12)
         settings_layout.setContentsMargins(12, 16, 12, 10)
-
-        self.conf_slider = LabeledSlider(
-            "Minimum detection confidence",
-            default_val=25,
-            tooltip=(
-                "This is the minimum confidence that the AI is required to have for a detection to be accepted. "
-                "Lower values will find more fish at the cost of more inaccurate detections, requiring more manual review. "
-                "higher values are more selective."
-            ),
-        )
-
-        self.review_conf_slider = LabeledSlider(
-            "Flag for review below",
-            default_val=50,
-            tooltip=(
-                "Accepted detections below this confidence are flagged for review, "
-                "so they can be checked manually. "
-            ),
-        )
-
+        self.conf_slider = LabeledNumber(
+            "Minimum detection confidence", 0.25,
+            "The minimum confidence the AI needs for a detection to be accepted. Lower values find more fish "
+            "but also more mistakes to review; higher values are more selective.")
+        self.review_conf_slider = LabeledNumber(
+            "Flag for review below", 0.50,
+            "Accepted detections below this confidence are flagged so you can check them on the Annotate Data page.")
         settings_layout.addWidget(self.conf_slider)
         settings_layout.addWidget(self.review_conf_slider)
-        self.input_cards.addWidget(settings_group,1)
+        settings_layout.addStretch()
+        self.input_cards.addWidget(settings_group, 1)
 
         # Past Runs.  Keep this widget alive and refresh its contents so a
         # run that has just completed appears immediately when the user returns
@@ -211,10 +198,10 @@ class MainWindow(QMainWindow):
         tips_layout = QVBoxLayout(tips)
         # A real list, not "• " prefixes, so wrapped lines hang under the text.
         tips_text = QLabel('<ul style="-qt-list-indent:0; margin-left:8px; margin-top:0px;">'
-                           '<li style="margin-bottom:10px;">Balance confidence thresholds to catch most fish '
+                           '<li style="margin-bottom:10px;">Balance the confidence settings to catch most fish '
                            'without too many false positives.</li>'
-                           '<li style="margin-bottom:10px;">Adjust the Flag review setting to control which '
-                           'detections are flagged for manual review.</li>'
+                           '<li style="margin-bottom:10px;">Detections below the review value are flagged for '
+                           'you to check on the Annotate Data page.</li>'
                            '<li style="margin-bottom:10px;">Use a detector model trained on your specific data '
                            'or reef environment.</li>'
                            '<li>Some detection runs may be slow if your system does not have a GPU.</li>'

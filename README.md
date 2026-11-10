@@ -187,7 +187,7 @@ Opening a project takes you to **Overview**. Choose any starting point:
 | Starting point | Use it when | Next actions |
 |---|---|---|
 | **Detect Fish** | You have a video and an existing model. | Run detection, check predictions in Annotate Data, then view Results. |
-| **Annotate Data** | You want to label footage manually without running a model. | Open a video, save completed frames, export a YOLO dataset, then train. |
+| **Annotate Data** | You want to label footage manually without running a model. | Open a video, box the fish, export a YOLO dataset, then train. |
 | **Train a Model** | You already have a YOLO dataset. | Open `data.yaml`, validate it, train, evaluate, and reuse the model. |
 
 Overview also lists saved annotation sessions, detection runs, datasets, and trained models. Use the bin beside an item to remove its project entry after confirmation; its files remain on disk. These tools remain available throughout a project; completing a detection run is not a prerequisite for annotation or training. Finish or stop background jobs before switching projects.
@@ -198,14 +198,14 @@ For the detection workflow, choose **Detect Fish**:
 
 1. In **Video Input**, click **Browse…** or drop a video onto the dashed area.
 2. In **Model Input**, choose installed model weights. Use **Add model weights…** to import compatible YOLO `.pt`, RF-DETR `.pth`, or Darknet `.weights` with its matching `.cfg`.
-3. Set the detection and review thresholds:
+3. Check the detection and review thresholds in **Detection Settings** (type a value or use the arrows):
 
 | Setting | What it changes |
 |---|---|
 | **Minimum detection confidence** | The minimum score a model detection needs to be accepted. Lower values admit more detections, including potentially more false positives. |
 | **Flag for review below** | Accepted detections below this score are flagged for manual review. This does not change which detections the model accepts. |
 
-Use either the sliders or numeric fields. The defaults are **0.25** for detection and **0.50** for review. Hover over a setting for help. Overlap sensitivity is no longer a GUI control; the run configuration uses a fixed IoU threshold of **0.80** where supported by the detector.
+The defaults are **0.25** for detection and **0.50** for review. Hover over a setting for help. The IoU threshold is fixed at **0.80** where the detector supports it.
 
 ### 3. Run detection
 
@@ -217,7 +217,7 @@ When processing finishes, the app opens **Annotate Data**. Review the prediction
 
 For manual work, choose **Annotate Data** in the sidebar, browse for a video or drag one into the drop area, set a frame interval, and click **Start annotating**. This creates a saved annotation session without requiring model weights. Sessions reopen at the first unfinished sampled frame. Click **Annotate Data** in the sidebar again to return to the session list; detection runs can also be opened there.
 
-The session's frame interval sets how far Previous, Skip, and Confirm & Next advance; playback still shows every video frame. Manual tracking switches navigation to one frame at a time so copied boxes can be checked. Saving an empty frame explicitly marks it as a background example; an unfinished frame is never exported.
+The session's frame interval sets how far Previous and Next advance; playback still shows every video frame. Manual tracking switches navigation to one frame at a time so copied boxes can be checked. A frame is exported once it has at least one checked box.
 
 The annotation page places the video frame in the centre, missed-fish annotations on the left, a selected-fish preview on the right, and the detection table below.
 
@@ -235,33 +235,35 @@ In **Annotate Data**, click the image to focus it, then:
 
 1. **Double-left-click** inside a fish to start a mask preview.
 2. **Double-left-click each additional fish** to make separate boxes. Earlier selections become pending boxes in the Annotations panel; clicks made while SAM is working are queued. To refine the active fish instead, use **Shift + double-left-click** to include missed parts and **double-right-click** to exclude unwanted regions.
-3. Enter the active fish’s class name in the **SAM** field in the left panel and press **Enter**. Name earlier fish separately in their Annotations rows and press Enter to save each box, or confirm all labelled boxes together. This generates a box around the mask and saves it through the normal annotation flow. A new species name uses the existing confirmation prompt.
-4. Adjust the saved box by dragging to move it or **Ctrl+dragging** an edge or corner to resize it. Use **Confirm & Next** separately when the entire frame has been checked. The saved box can be edited and exported like a manually drawn box.
+3. Enter the active fish’s class name in the **SAM** field in the left panel and press **Enter**. Earlier fish move to the Annotations list; type their species there. One **Enter** in any species field saves every named box at once, including the outlined fish; unnamed boxes stay for you to name. This generates a box around the mask and saves it through the normal annotation flow. A new species name uses the existing confirmation prompt.
+4. Adjust the saved box by dragging to move it or **Ctrl+dragging** an edge or corner to resize it. The saved box can be edited and exported like a manually drawn box.
 
-**Ctrl+Z** discards the active preview and queued clicks, keeping earlier pending boxes, or undoes the newly saved SAM box before frame confirmation. **Esc** also discards an idle preview. Save or cancel the preview to return to ordinary drawing and editing; no mode toggle is needed. Leaving a frame with an unfinished preview asks before discarding it. A negative double-click cannot start a new annotation. Ordinary right-drag exclusion remains available when SAM is inactive.
+**Ctrl+Z** discards the active preview and queued clicks, keeping earlier pending boxes, or undoes the newly saved SAM box. **Esc** also discards an idle preview. Save or cancel the preview to return to ordinary drawing and editing; no mode toggle is needed. Leaving a frame with an unfinished preview asks before discarding it. A negative double-click cannot start a new annotation. Ordinary right-drag exclusion remains available when SAM is inactive.
 
 **Preload nearby frames** is enabled by default in the Annotations panel. After a short idle delay, it prepares the current frame and the next two video frames in the background. The label shows **SAM ready for this frame** when its features are cached. Preloading pauses during playback and cancels further queued frames when you move elsewhere or leave the page. Turn the checkbox off to save CPU and battery. A running frame encoding finishes before cancellation takes effect.
 
-The cache holds up to three frames (about 48 MiB of image features with SAM 2.1 Tiny), shares the existing model weights, and never creates annotations. A ready frame can be segmented without re-encoding it; clicking before preparation finishes or jumping beyond the cache can still take several seconds. The first use loads the model; later prompts reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species or automatically confirm frames; following a fish through video is covered under tracking below. The checkpoint is stored under `models/sam/`, separate from detection weights.
+The cache holds up to three frames (about 48 MiB of image features with SAM 2.1 Tiny), shares the existing model weights, and never creates annotations. A ready frame can be segmented without re-encoding it; clicking before preparation finishes or jumping beyond the cache can still take several seconds. The first use loads the model; later prompts reuse cached features. Processing runs in the background, using CUDA when available and CPU otherwise. SAM does not identify species; following a fish through video is covered under tracking below. The checkpoint is stored under `models/sam/`, separate from detection weights.
 
 ### Inspect and correct predictions
 
 1. Select a detection in the frame or table to inspect its **Zoom / Preview** crop. **Full resolution** opens a larger view.
 2. Correct its **Reviewed species** if needed.
-3. Use the tick to keep a detection or the cross to reject a false positive or duplicate. Crossed rows are struck out and their boxes disappear; the tick can undo a rejection before saving.
-4. Click **Confirm & Next** to save the frame's decisions and advance. Confirm frames that are already correct too.
+3. Use the **tick** to keep a detection or the **cross** to reject a false positive or duplicate. Each tick or cross is saved straight away; there is no frame to confirm. Rows show **Not checked yet** until you decide, and a crossed box can be restored with **Ctrl+Z**.
+4. Moving or resizing a box, or changing its species, also counts as checking it; those edits are saved when you move to another frame.
 
-Resolved rows are hidden from the table. Click their boxes on the image to reopen their species editor. With a box selected, press **Delete** to remove it and its visible table row immediately. This saves only that deletion, without confirming the frame. Press **Ctrl+Z** to restore the last deleted box and its row; repeated presses restore earlier deletions in reverse order. This also works after stepping to another frame. Undo history resets when you confirm a frame, save a new annotation, or reopen a run. Delete and Ctrl+Z inside a species text field retain their normal text-editing behavior. Rejecting a manual annotation deletes it when confirmed; rejecting a model detection records the rejection so refreshed statistics can exclude it.
+The counter under the title shows **reviewed fish annotations x / y**: how many of the run's AI boxes (the low-confidence ones flagged for review, plus any AI boxes a track pulled in) you have ticked or crossed.
+
+Resolved rows are hidden from the table. Click their boxes on the image to reopen their species editor. With a box selected, press **Delete** to remove it and its visible table row immediately. This saves only that deletion. Press **Ctrl+Z** to restore the last deleted box and its row; repeated presses restore earlier deletions in reverse order. This also works after stepping to another frame. Undo history resets when you save a new annotation or reopen a run. Delete and Ctrl+Z inside a species text field retain their normal text-editing behavior. Rejecting a manual annotation deletes it; rejecting a model detection records the rejection so refreshed statistics can exclude it.
 
 ### Play or step through the video
 
-Click **Play** to advance through every video frame at the source frame rate; **Pause** stops on the current frame. A **bright red outline around the image** marks frames containing flagged model detections. Playback does not confirm frames or save decisions. It pauses when you start editing or leave the page, and stops at the end of the video. Slower machines may play below the source frame rate so no frames are skipped.
+Click **Play** to advance through every video frame at the source frame rate; **Pause** stops on the current frame. A **bright red outline around the image** marks frames containing flagged model detections. Playback does not save decisions. It pauses when you start editing or leave the page, and stops at the end of the video. Slower machines may play below the source frame rate so no frames are skipped.
 
-The **Review frames only** checkbox is temporarily hidden. **Left/Right arrow keys**, **Previous**, and **Skip** move one frame at a time without confirming it. **Confirm & Next** saves and confirms before advancing. Click the frame counter to jump to a frame number. When no video can be opened, playback is disabled and navigation uses the saved review frames. Navigation asks before discarding unconfirmed edits.
+The **Review frames only** checkbox is temporarily hidden. **Left/Right arrow keys**, **Previous** and **Next** (or **Enter**) move one frame at a time, saving your edits on the frame first. Click the frame counter to jump to a frame number. When no video can be opened, playback is disabled and navigation uses the saved review frames. An open SAM outline must be saved or cancelled (Esc) before moving.
 
 ### Add missed fish
 
-Drag a rectangle around a missed fish directly in the image. Use **Shift+drag** to draw over an existing box instead of moving it. Choose the species in the Annotations panel. **Track?** controls appear in the Annotations panel after **Enter** saves the class: click the **tick** to enable tracking, or leave the default **cross** for a single-frame box. No popup interrupts drawing. There is no Draw box button. Press **Enter** in its species field to save the annotation without advancing, or save pending boxes together with **Confirm & Next**. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
+Drag a rectangle around a missed fish directly in the image. Use **Shift+drag** to draw over an existing box instead of moving it. Choose the species in the Annotations panel. **Track?** controls appear in the Annotations panel after **Enter** saves the class: click the **tick** to enable tracking, or leave the default **cross** for a single-frame box. No popup interrupts drawing. There is no Draw box button. Press **Enter** in its species field to save the annotation without advancing, or move to another frame, which saves pending boxes too. Use the annotation's remove button or **Ctrl+Z** to remove a pending box.
 
 For small fish, use **Ctrl+scroll** to zoom, **scroll** to pan vertically, and **Shift+scroll** to pan sideways. Boxes are saved in the original frame coordinates regardless of zoom.
 
@@ -269,50 +271,52 @@ Manual annotations contribute to detection counts and Max-N after the results re
 
 ### Move boxes and track across frames
 
-Click and drag inside an existing box to move it. Hold **Ctrl** and drag an edge to resize its width or height, or a corner to resize both. Both model boxes and manual annotations can be moved, including while zoomed in; their coordinates stay inside the frame. Click **Confirm & Next** to save position changes. Model boxes retain their original detection identity, so moving one updates the same detection in refreshed results rather than creating a duplicate.
+Click and drag inside an existing box to move it. Hold **Ctrl** and drag an edge to resize its width or height, or a corner to resize both. Both model boxes and manual annotations can be moved, including while zoomed in; their coordinates stay inside the frame. Position changes are saved when you move to another frame, and count as checking the box. Model boxes retain their original detection identity, so moving one updates the same detection in refreshed results rather than creating a duplicate.
 
 The **Track?** toggle follows one fish at a time. It checks up to **three frames ahead**, prefers matching AI annotations, and proposes boxes for gaps:
 
-1. Save a drawn or SAM box with its species, then enable **Track?**. The page enters **tracking mode**: **Confirm & Next** becomes **Next (tracking)** and a **Finish fish** button appears.
-2. **Next (tracking)** saves this fish's box, prepares the next three frames for it, and moves on. It does **not** mark the frame complete, so other fish on that frame stay unlabelled until you come back to them. Only the fish you are tracking moves forward.
+1. Save a drawn or SAM box with its species, then enable **Track?**. The page enters **tracking mode**: **Next** becomes **Next (tracking)** and a **Finish fish** button appears.
+2. **Next (tracking)** accepts this fish's box, prepares the next three frames for it, and moves on. Only the fish you are tracking moves forward.
 3. Matching AI detections take priority over untracked manual matches. Their boxes, confidence and original detector track IDs are preserved; they are linked to your track without adding duplicate copies. Close competing AI matches pause the lookahead rather than forcing an identity assignment.
 4. If AI detections are missing between matching anchors, pending gap boxes are interpolated between the anchor positions. With no later anchor in the three-frame window, the last position is copied. When you open a gap frame, SAM attempts to shift and resize its box using cached features where available. SAM does not alter the AI anchor boxes. If SAM cannot find the fish in a copied box, the status bar warns that it may have left; the box is kept, because SAM cannot reliably tell a hidden fish from empty reef.
-5. When the fish leaves, **Delete** its box (this ends the track from that frame onward; **Ctrl+Z** restores it) or press **Finish fish** on its last frame (its box there is kept and later suggestions are removed). Either way the button returns to **Confirm & Next**.
-6. Go back and track the next fish. A track can pass through frames that were already completed: a new suggestion reopens such a frame, and once you review the box with **Next (tracking)**, or finish or delete the track, that frame is marked complete again.
+5. When the fish leaves, **Delete** its box (this ends the track from that frame onward; **Ctrl+Z** restores it) or press **Finish fish** on its last frame (its box there is kept and later suggestions are removed). Either way the button returns to **Next**.
+6. **Confirm the track.** Click any of the fish's boxes and press **Confirm track** in the Track? panel: every unchecked box of that fish is accepted at once and its track is finished. Fix wrong boxes first.
+7. Track the next fish. Starting a new box (SAM, drawing or pasting) while a fish still has unchecked tracked boxes asks you to confirm that track first.
 
 #### Tracking with SAM video
 
 When the SAM model is installed (`pixi run setup-sam`), steps 2–4 work differently. SAM 2's video tracker follows the fish instead of copying its box forward:
 
-- **Ticking Track? asks how many frames to track** (20 by default). SAM then works through them while a progress bar shows the current frame and the estimated time left. To keep this quick on a CPU (about a second per frame), SAM only looks at a square window around the fish, about four times its size, which follows the fish from frame to frame; if the fish swims close and fills the window, SAM restarts with a bigger one. **Stop** keeps the boxes already made.
+- **Ticking Track? asks how many seconds of video to track** (1 s by default; the question shows how much video is left). SAM then works through those frames while a progress bar shows the seconds done out of the seconds asked (**x / y s**) and the estimated time left. To keep this quick on a CPU (about a second per frame), SAM only looks at a square window around the fish, about four times its size, which follows the fish from frame to frame; if the fish swims close and fills the window, SAM restarts with a bigger one. **Stop** keeps the boxes already made.
 - **Afterwards, check the boxes** with **Next (tracking)**. Each one is a pending suggestion.
   - **Accept a box** and SAM keeps its memory of the fish.
-  - **Correct a box** (move or resize it) before pressing Next and SAM recomputes the rest of the batch from your corrected box, with the progress bar again.
-  - **Accept the last box** of a batch and you are asked whether to track more frames.
+  - **Correct a box** (move or resize it) before pressing Next. Only that box changes; the rest of the batch is kept.
+  - **Accept the last box** of a batch and you are asked whether to track more frames. Tracking continues from that box, including any correction you made to it.
 - **Existing boxes come first.** Each frame is checked before SAM runs. If it already has a box of the same class as the track (ignoring capitals) where the fish just was, that box is used and linked to the track, and SAM skips the frame. It does not matter what made the box: you, SAM or the detector. Boxes on another fish's track are left alone. SAM only runs on frames without such a box, starting from the last good box. If two boxes are equally close (two fish together), SAM decides. A track's class is whatever you name it, so name it the same as the detector's class (for example `fish`) for AI boxes to be used.
 - **You can start a track from any box.** Clicking an AI box (or your own) shows **Track?** for it.
+- **Track multiple fish.** Press **Track multiple fish** (under the Annotations list), click each fish you want (selected fish get a cyan outline; click again to unselect), then press **Enter**. You are asked for the number of seconds once, and SAM tracks the fish one after another in a single progress window ("Fish 2 of 3"). **Stop** ends the whole batch, keeping what is done. Afterwards check the boxes with **Next** and press **Confirm track** on each fish. **Esc** cancels the selection. Save any new boxes before starting.
 - **After Finish fish, Delete removes just the selected box.** Use it for the odd bad box in a batch; the fish's other boxes stay, and the gap is not filled in again. While you are still following the fish, deleting its box ends the track on that frame instead.
 - **When SAM decides the fish has left or is hidden**, it stops at that frame and says so. Nothing is deleted. Draw the fish again and tick **Track?** to keep following it, or go back a frame and press **Finish fish**.
 
 Without the SAM model, tracking uses the three-frame lookahead described above.
 
-When every fish is labelled, use **Confirm & Next** to complete the remaining frames. On a frame with tracked fish but outside tracking mode, Confirm & Next completes the frame and moves every track on it forward.
+When every fish is labelled, tick or cross any remaining AI boxes; there is no frame to confirm.
 
 Only untouched generated gap boxes can be recalculated or replaced by matching AI detections. Reviewed boxes are preserved; rejected detections, finished fish and deleted tracks block further lookahead. The same detection cannot be claimed by two manual tracks. A reviewed manual box already on this track remains authoritative even when an AI prediction overlaps it.
 
-SAM adjustments remain unsaved edits until you save or confirm. If SAM is unavailable, finds no mask, or proposes an implausible position or size, the gap box stays at its estimated position and the status message asks you to adjust it manually. Neither interpolation nor SAM proves that the fish is present or is the same individual.
+SAM adjustments remain unsaved edits until you move to another frame. If SAM is unavailable, finds no mask, or proposes an implausible position or size, the gap box stays at its estimated position and the status message asks you to adjust it manually. Neither interpolation nor SAM proves that the fish is present or is the same individual.
 
-Playback, arrow keys and Skip only navigate; they do not extend the track. Future suggestions remain pending and do not confirm frames. Reconfirming does not duplicate suggestions. The lookahead reuses existing AI detections rather than rerunning the detector, and SAM runs only for missing boxes when their frame is opened. Manual gap boxes have no fabricated model confidence or detector track ID.
+Playback, arrow keys and Previous/Next only navigate; they do not extend the track. Future suggestions remain pending until you check them or confirm the track. The lookahead reuses existing AI detections rather than rerunning the detector, and SAM runs only for missing boxes when their frame is opened. Manual gap boxes have no fabricated model confidence or detector track ID.
 
 ### Remove detections from a fixed area
 
 Hold the **right mouse button and drag** a rectangle over an unwanted annotation. Model boxes whose centres fall inside that area are removed from the current and later frames of this video, regardless of predicted species. Earlier frames, manual annotations, and active tracks are preserved. Zoom and pan are supported.
 
-**Ctrl+Z** undoes the whole area removal before you confirm or save another annotation. Removals are saved with the run's reviews and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or, for the fish you are following in tracking mode, stops its track); repeated deletions no longer trigger automatic suppression.
+**Ctrl+Z** undoes the whole area removal before you save another annotation. Removals are saved with the run's reviews and apply after reopening, in refreshed results, and in dataset exports. Normal **Delete** only removes the selected annotation (or, for the fish you are following in tracking mode, stops its track); repeated deletions no longer trigger automatic suppression.
 
 ### Return to refreshed results
 
-Click **Back to Results** or navigate away using the sidebar to save your labelled annotations and edits automatically, even when only part of the video has been reviewed. Leaving does not confirm unfinished frames or advance tracks. Boxes without a species must be labelled or removed before leaving. For detection runs, the app refreshes saved results before opening the destination page, so charts and summaries include your changes. Manual sessions save and return to Overview without generating detection results. There is no separate **Refresh Results** button.
+Click **Back to Results** or navigate away using the sidebar to save your labelled annotations and edits automatically, even when only part of the video has been reviewed. Leaving does not advance tracks. Boxes without a species must be labelled or removed before leaving. For detection runs, the app refreshes saved results before opening the destination page, so charts and summaries include your changes. Manual sessions save and return to Overview without generating detection results. There is no separate **Refresh Results** button.
 
 The refresh rebuilds `track_summary.csv`, charts, and available Max-N examples from the original predictions plus saved decisions. It also writes `reviewed_detections.csv` and preserves the initial summary as `track_summary_original.csv`. Unreviewed predictions retain their original labels. Refreshing does not rerun tracking, and repeated refreshes start from `original_detections.json` rather than accumulating changes.
 
@@ -346,7 +350,7 @@ The example frames show available Max-N observations with the relevant fish high
 
 ## Train a Model
 
-Dataset export is available from the **Export dataset** button on the **Annotate Data** page. Choose training and validation percentages, a new destination folder, and **Generate AI Training Data**. The remaining percentage is held out for testing. Only completed frames are exported, including explicitly confirmed empty frames. Each session currently contains one source video; its frames are split in time order. At least three completed frames and a labelled fish are required. Existing dataset directories are never overwritten.
+Dataset export is available from the **Export dataset** button on the **Annotate Data** page. Choose training and validation percentages, a new destination folder, and **Generate AI Training Data**. The remaining percentage is held out for testing. Frames with at least one checked box (ticked, drawn, fixed or in a confirmed track) are exported. Each session currently contains one source video; its frames are split in time order. At least three such frames and a labelled fish are required. Existing dataset directories are never overwritten.
 
 Exported datasets appear in Overview and in the training page's project dataset selector. Click **Use in Train a Model** to continue immediately.
 
@@ -427,7 +431,7 @@ class BaseDetector:
         raise NotImplementedError
 ```
 
-`infer()` takes a single BGR video frame plus the confidence/IoU thresholds from the GUI sliders, and must return a `DetectionFrame`:
+`infer()` takes a single BGR video frame plus the confidence/IoU thresholds from Detection Settings, and must return a `DetectionFrame`:
 
 ```python
 @dataclass

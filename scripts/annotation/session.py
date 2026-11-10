@@ -25,7 +25,8 @@ class ReviewSession:
         self.rows, self.fields, self.names = [], [], []
         self.rows_by_frame = {}
         self.flagged_frames = []
-        self.review_complete_count = 0
+        self.ai_total = 0       # AI boxes to review (low-confidence ones, and any a track pulled in)
+        self.ai_reviewed = 0    # of those, ticked or crossed
         self.detections_by_frame = {}
         self.manual_session = False
         self.frame_interval = 1
@@ -81,16 +82,12 @@ class ReviewSession:
         return (self.root / 'species_names.json').exists()
 
     def start_frame(self, total_frames, has_video):
-        """Where to open: the first unfinished frame, or a pending track box."""
+        """Where to open: the first box still waiting for a check, else where you left off."""
+        unchecked = [r['frame_number'] for r in self.rows if r['review_status'] == 'pending']
+        if unchecked:
+            return min(unchecked)
         if has_video:
-            if not self.manual_session:
-                return 1
-            completed = set(self.completed_frames())
-            pending_track_frames = {r['frame_number'] for r in self.rows
-                                    if r.get('manual_track_id') and r['review_status'] == 'pending'}
-            sampled = range(1, total_frames + 1, self.frame_interval)
-            next_sample = next((n for n in sampled if n not in completed), total_frames)
-            return min(pending_track_frames | {next_sample})
+            return max(self.rows_by_frame, default=1) if self.manual_session else 1
         if self.flagged_frames:
             return next((n for n in self.flagged_frames
                          if any(r['review_status'] not in ('confirmed', 'rejected') for r in self.frame_rows(n))),
@@ -106,8 +103,10 @@ class ReviewSession:
             self.rows_by_frame[row['frame_number']].append(row)
         self.flagged_frames = sorted({r['frame_number'] for r in self.rows
                                       if r.get('annotation_source') != 'manual'})
-        self.review_complete_count = sum(all(r['review_status'] in ('confirmed', 'rejected')
-                                             for r in self.rows_by_frame[n]) for n in self.flagged_frames)
+        ai = [r for r in self.rows if r.get('annotation_source') != 'manual']
+        self.ai_total = len(ai)
+        self.ai_reviewed = sum(r.get('reviewed') == 'yes' or r['review_status'] in ('confirmed', 'rejected')
+                               for r in ai)
 
     def save(self, rows, complete=None):
         """Save rows, then adopt them. Raises OSError on failure.

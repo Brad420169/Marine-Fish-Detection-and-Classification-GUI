@@ -73,6 +73,8 @@ class SamAssist:
             return
         if self.worker:
             return
+        if include and not self.points and not page.tracking.confirm_first():
+            return  # a new fish waits until the unchecked track is confirmed
         if include and not extend and self.points:
             # A plain double-click elsewhere starts another fish; keep this one as a pending box.
             if self.mask is not None and self.mask.any():

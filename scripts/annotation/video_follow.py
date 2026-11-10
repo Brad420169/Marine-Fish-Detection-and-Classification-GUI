@@ -1,11 +1,13 @@
 """SAM 2 video tracking for the fish followed in tracking mode.
 
-Ticking Track? asks how many frames to track (when the SAM model is installed;
-otherwise the copy-forward lookahead in review_tracks.py is used). SAM's video tracker (sam_video.py) then follows the fish through them with a
-progress bar (Stop keeps what is done), saving each box as a pending suggestion, and
-you check them afterwards with Next (tracking). Accepting a box keeps SAM's memory of
-the fish; correcting one recomputes the rest of the batch from the corrected box.
-Accepting the last box offers to track more. When SAM decides the fish is no longer
+Ticking Track? asks how many seconds of video to track (when the SAM model is installed;
+otherwise the copy-forward lookahead in review_tracks.py is used). SAM's video tracker
+(sam_video.py) then follows the fish through them with a progress bar (Stop keeps what
+is done), saving each box as a pending suggestion, and you check them afterwards with
+Next (tracking). Correcting a box changes only that box; the rest of the batch is kept.
+Accepting the last box offers to track more, starting from it (as corrected).
+Track multiple fish queues several fish behind one question and one progress window;
+they are tracked one after another over the same stretch of video. When SAM decides the fish is no longer
 visible it stops and says so on that frame; it never deletes anything.
 
 Frames that already have a box for this fish (same class as the track, where the fish
@@ -30,7 +32,7 @@ def _same_box(a, b, tolerance=1.0):
 
 
 class VideoFollow:
-    DEFAULT_FRAMES = 20
+    DEFAULT_SECONDS = 1.0
 
     def __init__(self, page):
         self.page = page
@@ -45,7 +47,12 @@ class VideoFollow:
         self.lost_at = None
         self.restart = None    # (frame, box) to start from once the running job stops
         self.deferred = {}     # boxes for the frame on screen, held until its edits are saved
-        self.frames = self.DEFAULT_FRAMES  # last batch size asked for
+        self.track_seconds = self.DEFAULT_SECONDS  # last length asked for, in seconds of video
+        self.queue = []        # (track, box) of fish still to track in this batch (Track multiple fish)
+        self.fish_count = 0    # fish in this batch when several were chosen, else 0
+        self.fish_index = 0
+        self.multi_span = None  # (frame the fish were chosen on, last frame) for a multi-fish batch
+        self.fish_results = []  # (species, frames tracked, frame lost or None) per finished fish
         self.batch = None      # (first, last) frame of the batch being computed
         self.progress = None   # QProgressDialog while a batch runs
         self.seconds = None    # measured seconds per frame, for the estimate
@@ -79,16 +86,17 @@ class VideoFollow:
             if count:
                 self._restart(track, number, box, number + count)
             return bool(count)
-        if track == self.track and _same_box(self.results.get(number), box):
-            # SAM's own box accepted. At the end of the batch, offer more frames.
-            if number >= self.want and self.lost_at is None and not self.worker:
-                count = self._ask(number, more=True)
-                if count:
-                    self._extend(number + count)
-                    return True
-            return False
-        if track == self.track and number < self.want:
-            self._restart(track, number, box, self.want)  # corrected mid-batch: redo the rest of it
+        if track == self.track:
+            if number < self.want or self.worker:
+                return False  # mid-batch: accepted or corrected, only this box changes
+            # The last box of the batch: offer more frames, continuing from this box.
+            count = self._ask(number, more=True)
+            if not count:
+                return False
+            if _same_box(self.results.get(number), box) and self.lost_at is None:
+                self._extend(number + count)  # SAM's own box: keep its memory
+            else:
+                self._restart(track, number, box, number + count)  # corrected: start from your box
             return True
         count = self._ask(number)
         if count:
@@ -96,20 +104,60 @@ class VideoFollow:
             return True
         return False
 
-    def _ask(self, number, more=False):
+    def fps(self):
+        page = self.page
+        return page.video_reader.fps or page.session.fps or 25.0
+
+    def follow_many(self, number, fish):
+        """Track several fish ((track, box) each, boxed on ``number``) over the same stretch of
+        video, one after another, behind one question. Returns True if tracking starts."""
+        if not self.enabled or not fish:
+            return False
+        count = self._ask(number, fish=len(fish))
+        if not count:
+            return False
+        self.queue, self.fish_results = list(fish[1:]), []
+        self.fish_count, self.fish_index = len(fish), 1
+        self.multi_span = (number, number + count)
+        track, box = fish[0]
+        self._restart(track, number, box, number + count)
+        return True
+
+    def _next_fish(self):
+        """The current fish of a multi-fish batch is done: start the next one."""
+        self.fish_results.append(self._fish_result())
+        track, box = self.queue.pop(0)
+        self.fish_index += 1
+        number, until = self.multi_span
+        self._restart(track, number, box, until)
+
+    def _fish_result(self):
+        start = self.multi_span[0] if self.multi_span else None
+        done = sum(1 for n, box in self.results.items() if box is not None and n != start)
+        return self.species or 'fish', done, self.lost_at
+
+    def _ask(self, number, more=False, fish=1):
+        """Ask how many seconds of video to track; returns the number of frames (0 = cancelled)."""
         page = self.page
         left = page.total_frames - number
         if left < 1:
             return 0
-        speed = (f'about {self.seconds:.0f} s per frame on this computer' if self.seconds
-                 else 'about a second per frame on a CPU')
-        question = 'Track this fish for how many more frames?' if more else 'Track this fish with SAM for how many frames?'
-        count, accepted = QInputDialog.getInt(page, 'Track with SAM', f'{question}\n({speed})',
-                                              min(self.frames, left), 1, left)
+        fps = self.fps()
+        available = round(left / fps, 1) or 0.1
+        speed = (f'SAM takes about {self.seconds:.1f} s per frame on this computer' if self.seconds
+                 else 'SAM takes about a second per frame on a CPU')
+        if fish > 1:
+            question = f'Track these {fish} fish for how many seconds?'
+        else:
+            question = 'Track this fish for how many more seconds?' if more else 'Track this fish with SAM for how many seconds?'
+        label = (f'{question}\n{available:.1f} s of video left ({fps:g} frames per second).\n'
+                 f'{speed}; frames that already have a box are near-instant.')
+        seconds, accepted = QInputDialog.getDouble(page, 'Track with SAM', label,
+                                                   min(self.track_seconds, available), 0.1, available, 1)
         if not accepted:
             return 0
-        self.frames = count
-        return count
+        self.track_seconds = seconds
+        return max(1, min(left, round(seconds * fps)))
 
     def _restart(self, track, number, box, until):
         self.run += 1
@@ -161,6 +209,7 @@ class VideoFollow:
 
     def _show_progress(self):
         first, last = self.batch
+        total = (last - first + 1) / self.fps()
         if self.progress is None:
             dialog = QProgressDialog('', 'Stop', 0, 1, self.page)
             dialog.setWindowTitle('Tracking with SAM')
@@ -172,7 +221,8 @@ class VideoFollow:
             self.progress = dialog
         self.progress.setRange(0, last - first + 1)
         self.progress.setValue(0)
-        self.progress.setLabelText(f'SAM is following the fish through frames {first}–{last}…')
+        self.progress.setLabelText(f'{self._fish_label()}SAM is following the fish: 0.0 / {total:.1f} s '
+                                   f'(frames {first}–{last})…')
         self.progress.show()
 
     def _update_progress(self, number):
@@ -184,11 +234,17 @@ class VideoFollow:
             self.seconds = step if self.seconds is None else 0.7 * self.seconds + 0.3 * step
         self._last_step = now
         first, last = self.batch
+        fps = self.fps()
         dialog = self.progress  # setValue runs pending events, which may finish the batch
-        left = (f' · about {(last - number) * self.seconds:.0f} s left'
+        left = (f' · about {(last - number) * self.seconds:.0f} s to go'
                 if self.seconds and number < last else '')
-        dialog.setLabelText(f'SAM is following the fish: frame {number} of {first}–{last}{left}')
+        dialog.setLabelText(f'{self._fish_label()}SAM is following the fish: '
+                            f'{(number - first + 1) / fps:.1f} / {(last - first + 1) / fps:.1f} s '
+                            f'(frame {number}){left}')
         dialog.setValue(number - first + 1)
+
+    def _fish_label(self):
+        return f'Fish {self.fish_index} of {self.fish_count}. ' if self.fish_count > 1 else ''
 
     def _close_progress(self):
         if self.progress:
@@ -201,6 +257,7 @@ class VideoFollow:
         done = [n for n, box in self.results.items() if box is not None]
         self.want = max(done, default=self.want)
         self.restart = None
+        self.queue = []  # Stop ends the whole batch, not just this fish
         if self.worker:
             self.worker.requestInterruption()
 
@@ -208,6 +265,7 @@ class VideoFollow:
         """Stop following (Finish fish, a deleted box, another run opened)."""
         self.run += 1
         self.track, self.results, self.lost_at, self.restart, self.deferred = None, {}, None, None, {}
+        self.queue, self.fish_count, self.multi_span = [], 0, None
         self._close_progress()
         if self.worker:
             self.worker.requestInterruption()
@@ -326,13 +384,9 @@ class VideoFollow:
             new.update(zip(('x1', 'y1', 'x2', 'y2'), box))
             keep.append(new)
         try:
-            completed = number in session.completed_frames()
             session.save(keep)
         except (OSError, ValueError) as exc:
             page.status.setText(f'Tracked box not saved: {exc}')
-            return
-        if completed:
-            page.tracking.reopened.add(number)  # re-completed once its boxes are reviewed again
 
     def _link(self, rows, number, box, kind):
         """Rows with the existing box on ``number`` linked to the followed fish, or None if it is gone."""
@@ -356,7 +410,7 @@ class VideoFollow:
 
     def _remove_suggestions(self, track, after):
         """Drop this fish's unreviewed suggestions after ``after`` and unlink its unreviewed
-        AI boxes there (tracking is starting over from a corrected box)."""
+        AI boxes there (tracking is starting over from this box)."""
         session = self.page.session
         rows = [dict(r, manual_track_id='') if (r.get('manual_track_id') == track and r['frame_number'] > after
                                                  and r.get('annotation_source') != 'manual'
@@ -402,12 +456,28 @@ class VideoFollow:
               and self.tracker.next <= min(self.want, page.total_frames)
               and worker and not worker.isInterruptionRequested()):
             self._start_worker()  # more frames were asked for while it was finishing
+        elif self.queue and self.track:
+            self._next_fish()
         else:
             self._close_progress()
-            if self.track:
+            if self.fish_count > 1 and self.track:
+                page.status.setText(self.multi_message())
+                page.tracking.active = None  # check every fish with plain Next
+                self.fish_count, self.multi_span = 0, None
+            elif self.track:
                 page.status.setText(self.stop_progress_message())
             page.sam.schedule_preload()
         page.update_controls()
+
+    def multi_message(self):
+        results = self.fish_results + [self._fish_result()]
+        number, until = self.multi_span
+        message = (f'Tracked {len(results)} fish over {(until - number) / self.fps():.1f} s '
+                   f'(frames {number + 1}–{until}).')
+        lost = [f'{species} at frame {at}' for species, _, at in results if at is not None]
+        if lost:
+            message += ' SAM lost ' + ', '.join(lost) + '.'
+        return message + ' Check the boxes with Next, then click each fish and press Confirm track.'
 
     def lost_message(self):
         return ('SAM thinks the fish has left or is hidden on this frame. Draw it and tick Track? to keep '

@@ -61,27 +61,27 @@ def main():
         assert editor.session.manual_session and editor.raw is not None
         editor.session.names = ['Fish']
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
-        editor.confirm_frame()  # first frame with a fish
+        editor.next_frame()  # Next saves the drawn box
         assert editor.frame_number == 3
-        editor.confirm_frame()  # explicitly empty frame
+        editor.next_frame()  # an empty frame: nothing to save
         assert editor.frame_number == 5
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
-        editor.confirm_frame()
-        assert reviewed_frames(root)[2] == [1, 3, 5]
+        editor.next_frame()
+        assert reviewed_frames(root)[2] == [1, 5]  # frames with a checked box
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
         window._navigate_shell('overview')
         assert window.pages.currentWidget() is window.overview_page
-        # Leaving saves the drawn box instead of discarding it; the frame stays unfinished.
+        # Leaving saves the drawn box instead of discarding it.
         assert any(int(r['frame_number']) == 7 for r in load_rows(root)[0])
-        assert reviewed_frames(root)[2] == [1, 3, 5]
+        assert reviewed_frames(root)[2] == [1, 5, 7]
         assert not (root / 'track_summary.csv').exists()  # manual work isn't a detection run
         window._open_annotation(root)
-        assert editor.frame_number == 7  # resumes at first unfinished sampled frame
+        assert editor.frame_number == 7  # resumes where you left off
         saved_rows = load_rows(root)[0]
         editor.add_pending_box([20, 20, 60, 60], 'Fish')
         assert len(editor.frame.pending) == 1
         assert load_rows(root)[0] == saved_rows
-        editor.show_frame()  # drafts are discarded until confirmed
+        editor.show_frame()  # an unsaved drawn box is dropped when the frame is reloaded
         # Completing a different detection must not replace this editor's selected result.
         prior_outputs = dict(window.results_page.outputs)
         window._pending_model_name = 'background-model'
@@ -93,8 +93,8 @@ def main():
         project.runs.clear(); project.save()
         exported, counts = export_yolo_dataset(root, folder / 'dataset')
         assert counts == (1, 1, 1)
-        assert (exported.parent / 'labels/val/frame_000003.txt').read_text() == ''
-        assert not list(exported.parent.rglob('*000007*'))
+        assert (exported.parent / 'labels/val/frame_000005.txt').read_text().strip()
+        assert not list(exported.parent.rglob('*000003*'))  # no checked box there
         info = inspect_dataset(exported)
         assert info['counts'] == {'train': 1, 'val': 1, 'test': 1}
         assert info['names'] == ['Fish']

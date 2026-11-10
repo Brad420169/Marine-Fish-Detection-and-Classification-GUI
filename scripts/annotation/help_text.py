@@ -14,7 +14,7 @@ STEPS = (
     ('1', 'Double-click a fish', 'Double-left-click each fish separately. Shift + double-left-click expands the active fish; double-right-click trims it.'),
     ('2', 'Enter species name', 'Type the species in the SAM field; Enter creates and saves its box.'),
     ('3', 'Adjust the box', 'Drag to move; Ctrl-drag an edge or corner to resize.'),
-    ('4', 'Confirm the frame', 'Check all fish, then Confirm & Next saves edits and advances.'),
+    ('4', 'Tick or cross AI boxes', 'Each tick or cross saves at once. Previous / Next save your other edits.'),
 )
 
 PREVIEW_HINT = ('<span style="color: #45d8f6;"><b>Ctrl + scroll</b></span> &nbsp; Zoom<br>'
@@ -28,7 +28,7 @@ TIPS = (
         ('1', '<b>Double-click a fish.</b> SAM outlines it. Double-click the next fish for its own box.'),
         ('2', '<b>Fix the outline</b> if needed: <b>Shift + double-click</b> adds a missed part, '
               '<b>double-right-click</b> trims.'),
-        ('3', '<b>Type the species</b> in the SAM field and press <b>Enter</b> to save the box.'),
+        ('3', '<b>Type each species</b> (SAM field or the fish\'s row) and press <b>Enter</b>: all named boxes save.'),
         ('Undo', '<b>Esc</b> cancels the outline; <b>Ctrl + Z</b> undoes the last SAM box.'),
     )),
     ('Edit boxes', (
@@ -38,17 +38,19 @@ TIPS = (
         ('Clear an area', '<b>Right-drag</b> removes AI boxes in that area from this frame onward.'),
     )),
     ('Track with SAM', (
-        ('1', '<b>Click any box</b> (AI, SAM or yours) and tick <b>Track?</b>. Choose how many frames.'),
+        ('1', '<b>Click any box</b> (AI, SAM or yours) and tick <b>Track?</b>. Choose how many seconds.'),
         ('2', '<b>Wait for the bar.</b> Boxes of the same class already there are reused, so SAM only fills '
               'the gaps. <b>Stop</b> keeps what is done.'),
-        ('3', '<b>Check each frame</b> with <b>Next (tracking)</b>. Fix a wrong box and SAM redoes the rest from it.'),
-        ('4', '<b>Finish fish</b> on the last box. Afterwards <b>Delete</b> removes just one bad box.'),
+        ('3', '<b>Check each frame</b> with <b>Next (tracking)</b>. Fix any wrong box; only that box changes.'),
+        ('4', '<b>Click one of its boxes</b> and press <b>Confirm track</b> to accept them all. '
+              'A new box waits until the track is confirmed.'),
+        ('Several', '<b>Track multiple fish</b>, click each fish, then <b>Enter</b>: one question, all tracked.'),
         ('Tip', 'Name the track like the detector\'s class (e.g. <i>fish</i>) so its AI boxes are reused.'),
     )),
     ('Navigate', (
-        ('Confirm', '<b>Confirm &amp; Next</b> saves every box on the frame and moves on.'),
-        ('Browse', 'Click the image, then <b>Left / Right</b> to look around without confirming. '
-                   'Click the frame number to jump.'),
+        ('Check', '<b>Tick</b> or <b>cross</b> each AI box in the table; it saves at once.'),
+        ('Next', '<b>Previous / Next</b> (or arrows, Enter) save your edits and move.'),
+        ('Jump', 'Click the frame number to go to any frame.'),
         ('Zoom', '<b>Ctrl + scroll</b> zooms; <b>scroll</b> and <b>Shift + scroll</b> pan.'),
         ('Play', 'Plays the video without confirming; editing pauses it.'),
     )),
@@ -74,5 +76,6 @@ def _swatch(bgr, text):
             f'&nbsp;&nbsp;&nbsp;</span>&nbsp;{text}')
 
 
-BOX_LEGEND = ' &nbsp; '.join((_swatch(AI_COLOUR, 'AI'), _swatch(MANUAL_COLOUR, 'Manual / SAM'),
-                              _swatch(SELECTED_COLOUR, 'Selected')))
+BOX_LEGEND = ' &nbsp; '.join((_swatch(AI_COLOUR, 'Original AI Fish Detections'),
+                              _swatch(MANUAL_COLOUR, 'Manual &amp; SAM-Assisted Annotations'),
+                              _swatch(SELECTED_COLOUR, 'Selected Fish')))

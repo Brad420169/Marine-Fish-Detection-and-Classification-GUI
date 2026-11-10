@@ -1,11 +1,14 @@
 """Following one fish across frames on the annotation page.
 
 The track bookkeeping (lookahead, gap filling, ending a track) is in review_tracks.py;
-this class owns the page-side state: which fish is being followed, the Track? prompt,
-Next (tracking), Finish fish, and SAM adjustment of suggested boxes. When the SAM model
+this class owns the page-side state: which fish is being followed, the Track? prompt
+and Confirm track, Next (tracking), Finish fish, and SAM adjustment of suggested boxes. When the SAM model
 is installed, SAM's video tracker supplies the boxes instead (video_follow.py).
 """
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMessageBox
+
+from ui_icons import icon
 
 from review_io import box_identity, original_box, review_box
 from review_tracks import COPIED, INTERPOLATED, advance_tracks, create_track, end_track
@@ -23,21 +26,24 @@ class TrackingController:
         self.page = page
         self.active = None              # track id followed by Next (tracking)
         self.prompt_key = None          # the box the Track? prompt refers to (see _row_key)
-        self.reopened = set()           # completed frames a suggestion reopened
         self.adjusted = set()           # suggested boxes SAM already tried once
+        self.multi = None               # while choosing fish for Track multiple fish: their row keys
         self.video = VideoFollow(page)
 
     def reset(self):
         self.video.new_source()
+        self.cancel_multi(quiet=True)
         self.active = None
         self.prompt_key = None
-        self.reopened = set()
         self.adjusted = set()
 
     # Track? prompt
 
     def offer(self, row):
         """Show the Track? prompt for a saved box (just saved, or clicked)."""
+        if self.multi is not None:
+            self.toggle_multi(row)  # choosing fish for Track multiple fish
+            return
         self.prompt_key = None if row.get('review_status') == 'rejected' else _row_key(row)
 
     def hide_prompt(self):
@@ -53,14 +59,18 @@ class TrackingController:
     def position_prompt(self):
         page = self.page
         source = self._prompt_source()
-        if page.loading or source is None:
+        if page.loading or source is None or self.multi is not None:
             page.track_prompt.hide()
             return
         enabled = bool(source.get('manual_track_id'))
         page.track_yes.setChecked(enabled)
         page.track_no.setChecked(not enabled)
         page.track_yes.setEnabled(bool(page.video_reader) and page.frame_number < page.total_frames)
-        page.track_prompt.setToolTip(f'Track {source["species"]} into the next frame. Optional; off by default.')
+        page.track_prompt.setToolTip(f'Track {source["species"]} into the next frames. Optional; off by default.')
+        unchecked = len(self.unchecked_boxes(source.get('manual_track_id')))
+        page.confirm_track.setVisible(bool(unchecked))
+        page.confirm_track.setText(f'Confirm track ({unchecked})')
+        page.confirm_track.setEnabled(not page.worker and not self.video.worker)
         page.track_prompt.show()
 
     def set_saved(self, enabled):
@@ -98,6 +108,146 @@ class TrackingController:
         page.update_controls()
         page.image.setFocus()
 
+    # Track multiple fish
+
+    def multi_clicked(self):
+        """The Track multiple fish button: start choosing fish, or track the chosen ones."""
+        if self.multi is None:
+            self.start_multi()
+        else:
+            self.track_selected()
+
+    def start_multi(self):
+        page = self.page
+        if page.worker or self.video.worker or page.raw is None:
+            return
+        if not self.video.enabled:
+            QMessageBox.information(page, 'Track multiple fish',
+                                    'This needs the source video and the SAM model ("pixi run setup-sam").')
+            return
+        if page.frame.pending or page.sam.active:
+            page.status.setText('Save your boxes first: type a species for each, then press Enter.')
+            return
+        self.multi = set()
+        self.hide_prompt()
+        self._show_multi()
+
+    def toggle_multi(self, row):
+        if row.get('review_status') == 'rejected':
+            return
+        self.multi ^= {_row_key(row)}
+        self._show_multi()
+
+    def multi_rows(self):
+        if not self.multi:
+            return []
+        return [r for r in self.page.current() if _row_key(r) in self.multi and r.get('review_status') != 'rejected']
+
+    def _show_multi(self):
+        page, count = self.page, len(self.multi_rows())
+        page.multi_button.setIcon(QIcon())  # room for the text in the narrow panel
+        page.multi_button.setText(f'Track {count} fish (Enter)' if count else 'Select fish, then Enter')
+        page.status.setText(f'{count} fish selected. Click more fish (click again to unselect), then press Enter. '
+                            'Esc cancels.' if count else
+                            'Select fish: click each fish\'s box, then press Enter. Esc cancels.')
+        page.render()
+
+    def cancel_multi(self, quiet=False):
+        if self.multi is None:
+            return
+        self.multi = None
+        page = self.page
+        page.multi_button.setText('Track multiple fish')
+        page.multi_button.setIcon(icon('play'))
+        if not quiet:
+            page.status.setText('Track multiple fish cancelled.')
+            page.render()
+
+    def track_selected(self):
+        """Enter: give each chosen fish a track (or keep its own), ask for seconds once, track them all."""
+        page = self.page
+        chosen = self.multi_rows()
+        if not chosen:
+            page.status.setText('Click at least one fish first, or press Esc to cancel.')
+            return
+        rows, fish = page.session.rows, []
+        try:
+            for source in chosen:
+                if source.get('manual_track_id'):
+                    track = source['manual_track_id']
+                else:
+                    rows, track = create_track(rows, source)
+                fish.append((track, review_box(source)))
+            page.session.save(rows)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(page, 'Tracking not saved', str(exc))
+            return
+        self.cancel_multi(quiet=True)
+        page.undo_stack.clear()
+        page.render()
+        if not self.video.follow_many(page.frame_number, fish):
+            page.status.setText(f'{len(fish)} fish marked for tracking. Tick Track? on any of them to track it.')
+        page.update_controls()
+
+    # Confirming a track
+
+    def unchecked_boxes(self, track):
+        """This fish's boxes nobody has checked yet (SAM or AI suggestions)."""
+        if not track:
+            return []
+        return [r for r in self.page.session.rows
+                if r.get('manual_track_id') == track and r.get('review_status') == 'pending']
+
+    def confirm_prompted(self):
+        """Confirm track button: accept every box of the clicked fish's track."""
+        source = self._prompt_source()
+        if source is not None and source.get('manual_track_id'):
+            self.confirm_track(source['manual_track_id'])
+
+    def confirm_track(self, track):
+        """Accept all of a fish's unchecked boxes and finish its track. Returns True when saved."""
+        page = self.page
+        if page.worker or self.video.worker or not page.save_frame(refresh=False):
+            return False
+        unchecked = {id(r) for r in self.unchecked_boxes(track)}
+        rows = [dict(r, review_status='confirmed', reviewed='yes') if id(r) in unchecked else r
+                for r in page.session.rows]
+        frames = [int(r['frame_number']) for r in rows
+                  if r.get('manual_track_id') == track and r.get('review_status') != 'rejected']
+        if frames:
+            rows = end_track(rows, track, max(frames))  # nothing more is suggested for this fish
+        try:
+            page.session.save(rows)
+        except OSError as exc:
+            QMessageBox.critical(page, 'Track not confirmed', str(exc))
+            return False
+        if track == self.active or track == self.video.track:
+            self.active = None
+            self.video.stop()
+        page.undo_stack.clear()
+        page.show_frame()
+        page.status.setText(f'Track confirmed: {len(unchecked)} box{"es" if len(unchecked) != 1 else ""} accepted.')
+        return True
+
+    def confirm_first(self):
+        """Before a new box is started: a fish with unchecked tracked boxes must be confirmed
+        first. Returns True when it is fine to go on."""
+        page = self.page
+        pending = [r for r in page.session.rows if r.get('manual_track_id') and r.get('review_status') == 'pending']
+        if not pending:
+            return True
+        track = pending[0]['manual_track_id']
+        count = sum(r['manual_track_id'] == track for r in pending)
+        species = next((r['species'] for r in page.session.rows if r.get('manual_track_id') == track), 'fish')
+        box = QMessageBox(QMessageBox.Icon.Question, 'Confirm the track first',
+                          f'The "{species}" track still has {count} unchecked box{"es" if count != 1 else ""}. '
+                          'Confirm that track before adding another box?\n\n'
+                          'Check and fix its boxes first if any are wrong.', parent=page)
+        confirm = box.addButton('Confirm track', QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        return box.clickedButton() is confirm and self.confirm_track(track)
+
     # Tracking mode
 
     def is_active(self):
@@ -111,12 +261,11 @@ class TrackingController:
                    for i, row in enumerate(page.current()))
 
     def next(self):
-        """Save the tracked fish's box and move on; the frame is not marked complete."""
+        """Save the tracked fish's box (accepted) and move on."""
         page = self.page
         number = page.frame_number
-        if not page.save_frame(complete=False, track=self.active):
+        if not page.save_frame(track=self.active):
             return
-        self.restore_reopened()
         if number >= page.total_frames or not page.video_reader:
             self.active = None
             self.video.stop()
@@ -135,13 +284,13 @@ class TrackingController:
                 page.status.setText('SAM is following the fish to this frame…')
         elif self.active and not self.is_active():
             page.status.setText('The track stopped before this frame (competing AI boxes or a rejected detection). '
-                                'Draw this fish and tick Track? to follow it again, or carry on with Confirm & Next.')
+                                'Draw this fish and tick Track? to follow it again, or carry on with Next.')
 
     def finish(self):
         """Stop following the active fish on this frame; its box here is kept."""
         page = self.page
         track, number = self.active, page.frame_number
-        if not track or not page.save_frame(complete=False, track=track, advance=False):
+        if not track or not page.save_frame(track=track, advance=False):
             return
         self.video.stop()
         try:
@@ -150,11 +299,10 @@ class TrackingController:
             QMessageBox.critical(page, 'Track not finished', str(exc))
             return
         self.active = None
-        self.restore_reopened()
         page.undo_stack.clear()
         page.show_frame()
         page.status.setText('Finished this fish. Its box here is kept and later suggestions were removed. '
-                            'Go back and track the next fish, or Confirm & Next to complete frames.')
+                            'Click one of its boxes and press Confirm track to accept the rest.')
 
     def box_deleted(self, row):
         if row.get('manual_track_id') and row['manual_track_id'] == self.active:
@@ -167,28 +315,10 @@ class TrackingController:
         if track and self.video.enabled:
             return rows  # SAM's video tracker supplies this fish's boxes
         number = page.frame_number
-        completed = page.session.completed_frames()
-        rows = advance_tracks(rows, number, page.total_frames if page.video_reader else number,
+        return advance_tracks(rows, number, page.total_frames if page.video_reader else number,
                               page.session.detections_by_frame.get(number + 1, []),
                               detections_by_frame=page.session.detections_by_frame,
-                              lookahead=self.LOOKAHEAD, completed_frames=completed,
-                              track_ids={track} if track else None)
-        if track:
-            self.reopened |= {n for n in range(number + 1, number + 1 + self.LOOKAHEAD) if n in completed}
-        return rows
-
-    def restore_reopened(self):
-        """Re-complete frames a track reopened, once every box on them is reviewed again."""
-        session = self.page.session
-        for number in sorted(self.reopened):
-            rows = [r for r in session.rows if int(r['frame_number']) == number]
-            if any(r['review_status'] not in ('confirmed', 'rejected') for r in rows):
-                continue
-            try:
-                session.record_completion(number)
-            except (OSError, ValueError, KeyError):
-                continue
-            self.reopened.discard(number)
+                              lookahead=self.LOOKAHEAD, track_ids={track} if track else None)
 
     # SAM adjustment of suggested boxes
 

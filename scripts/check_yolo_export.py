@@ -29,13 +29,14 @@ def main():
             assert cv2.imwrite(str(images / f'frame_{number:06d}.jpg'), np.zeros((100, 100, 3), np.uint8))
         fields = ['frame_number', 'species', 'x1', 'y1', 'x2', 'y2', 'review_status',
                   'annotation_source', 'annotation_id']
-        rows = [dict(frame_number=1, species='Stonefish', x1=10, y1=20, x2=30, y2=40,
+        fields.append('reviewed')
+        rows = [dict(frame_number=1, species='Stonefish', x1=10, y1=20, x2=30, y2=40, reviewed='yes',
                      review_status='confirmed', annotation_source='model', annotation_id=''),
-                dict(frame_number=3, species='Coral fish', x1=0, y1=0, x2=50, y2=50,
+                dict(frame_number=2, species='Coral fish', x1=60, y1=60, x2=80, y2=80, reviewed='yes',
+                     review_status='confirmed', annotation_source='manual', annotation_id='new-2'),
+                dict(frame_number=3, species='Coral fish', x1=0, y1=0, x2=50, y2=50, reviewed='yes',
                      review_status='confirmed', annotation_source='manual', annotation_id='new-1')]
-        with ReviewStore.create(root, rows, fields) as store:
-            for number in range(1, 4):
-                store.record_completion(number, [r for r in rows if r['frame_number'] == number])
+        ReviewStore.create(root, rows, fields).close()  # every frame has a checked box
         assert results_need_refresh(root)
         save_rows(root / 'track_summary.csv', [], SUMMARY_FIELDS)
         refresh_results(root)
@@ -44,9 +45,9 @@ def main():
         assert counts == (1, 1, 1)
         assert 'path:' not in yaml.read_text()
         assert (root / 'dataset/labels/train/frame_000001.txt').read_text().strip() == '1 0.200000 0.300000 0.200000 0.200000'
-        assert (root / 'dataset/labels/val/frame_000002.txt').read_text() == ''
+        assert (root / 'dataset/labels/val/frame_000002.txt').read_text().strip() == '0 0.700000 0.700000 0.200000 0.200000'
         assert (root / 'dataset/labels/test/frame_000003.txt').read_text().strip() == '0 0.250000 0.250000 0.500000 0.500000'
-        rows[0]['species'] = 'Changed after confirmation'
+        rows[0]['review_status'] = 'rejected'  # its only box crossed out: no checked box left
         review_store.save_rows(root, rows)
         assert reviewed_frames(root)[2] == [2, 3]
     print('YOLO export check passed')

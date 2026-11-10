@@ -104,7 +104,7 @@ class VideoReader:
 
 
 class Navigator:
-    """Previous / Skip / jump / play. Moving never confirms a frame."""
+    """Previous / Next / jump / play. Moving saves your edits on the frame first."""
 
     def __init__(self, page):
         self.page = page
@@ -116,7 +116,7 @@ class Navigator:
         self.timer.timeout.connect(self.play_next)
 
     def next_number(self, step):
-        """The frame Previous / Skip / Confirm & Next lands on."""
+        """The frame Previous / Next lands on."""
         page = self.page
         number = page.frame_number
         if self.rows_only:
@@ -133,7 +133,7 @@ class Navigator:
     def go(self, step):
         page = self.page
         self.pause()
-        if page.worker or not page.discard_ok():
+        if page.worker or not page.save_frame(refresh=False):
             return
         page.frame_number = self.next_number(step)
         page.show_frame()
@@ -151,7 +151,7 @@ class Navigator:
         number, accepted = QInputDialog.getInt(
             page, 'Jump to frame', f'Video frame number (1–{page.total_frames}):',
             page.frame_number, 1, page.total_frames, 1)
-        if accepted and number != page.frame_number and page.discard_ok():
+        if accepted and number != page.frame_number and page.save_frame(refresh=False):
             page.frame_number = number
             page.show_frame()
 

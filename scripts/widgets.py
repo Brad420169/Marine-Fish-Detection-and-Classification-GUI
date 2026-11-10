@@ -369,71 +369,27 @@ class WeightsRow(QWidget):
         return str(path) if path else ""
 
 
-class LabeledSlider(QWidget):
-    """Slider with a directly editable numeric value and explanatory tooltip."""
+class LabeledNumber(QWidget):
+    """A setting as a label and an editable decimal box (0.01-0.99), with a tooltip."""
 
-    def __init__(
-        self,
-        label_text: str,
-        default_val: int = 50,
-        min_val: int = 1,
-        max_val: int = 99,
-        tooltip: str = "",
-        parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, label_text: str, default: float, tooltip: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-
         self.label = QLabel(label_text)
-        self.label.setFixedWidth(160)
-        if tooltip:
-            self.label.setToolTip(tooltip)
-        layout.addWidget(self.label)
-
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(min_val, max_val)
-        self.slider.setValue(default_val)
-        self.slider.setTickInterval(10)
-        self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        if tooltip:
-            self.slider.setToolTip(tooltip)
-        layout.addWidget(self.slider, 1)
-
-        # Editable boxed value. The slider uses integer hundredths internally,
-        # while the user sees and edits a decimal value such as 0.53.
+        layout.addWidget(self.label, 1)
         self.value_box = QDoubleSpinBox()
         self.value_box.setDecimals(2)
-        self.value_box.setRange(min_val / 100, max_val / 100)
+        self.value_box.setRange(0.01, 0.99)
         self.value_box.setSingleStep(0.01)
-        self.value_box.setValue(default_val / 100)
-        self.value_box.setFixedWidth(76)
+        self.value_box.setValue(default)
+        self.value_box.setFixedWidth(90)
         self.value_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.value_box.setKeyboardTracking(False)
-        if tooltip:
-            self.value_box.setToolTip(tooltip)
+        self.value_box.setAccessibleName(label_text)
         layout.addWidget(self.value_box)
-
-        self.slider.valueChanged.connect(self._slider_changed)
-        self.value_box.valueChanged.connect(self._box_changed)
-
-    def _slider_changed(self, val: int) -> None:
-        """Keep the editable value box in sync with slider movement."""
-        new_value = val / 100
-        if abs(self.value_box.value() - new_value) > 0.0001:
-            self.value_box.blockSignals(True)
-            self.value_box.setValue(new_value)
-            self.value_box.blockSignals(False)
-
-    def _box_changed(self, val: float) -> None:
-        """Move the slider when the user types or clicks a numeric value."""
-        slider_value = int(round(val * 100))
-        if self.slider.value() != slider_value:
-            self.slider.blockSignals(True)
-            self.slider.setValue(slider_value)
-            self.slider.blockSignals(False)
+        for widget in (self.label, self.value_box):
+            widget.setToolTip(tooltip)
 
     def value(self) -> float:
         return self.value_box.value()

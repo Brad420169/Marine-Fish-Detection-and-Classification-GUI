@@ -18,7 +18,7 @@ class DatasetExportPage(QWidget):
         layout = QVBoxLayout(self)
         export_group = QGroupBox('Generate AI training data')
         export_layout = QVBoxLayout(export_group)
-        note = QLabel('Only fully confirmed frames are exported. Frames are split in time order to reduce overlap between sets. Empty reviewed frames become background examples.')
+        note = QLabel('Frames with at least one checked box are exported. Frames are split in time order to reduce overlap between sets.')
         note.setWordWrap(True); export_layout.addWidget(note)
         self.frame_count = QLabel('Open an annotation session to export completed frames.')
         self.frame_count.setObjectName('muted'); export_layout.addWidget(self.frame_count)
@@ -60,7 +60,7 @@ class DatasetExportPage(QWidget):
         self.export_status.clear()
         try:
             count = len(reviewed_frames(self.root)[2])
-            self.frame_count.setText(f'{count} fully completed frames available. Unfinished frames are always excluded.')
+            self.frame_count.setText(f'{count} frames with checked boxes available. Frames with no checked box are left out.')
         except (OSError, ValueError, KeyError) as exc:
             self.frame_count.setText(str(exc))
 

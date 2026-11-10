@@ -51,6 +51,8 @@ class BoxEditor:
         box = [round(v, 2) for v in self._to_pixels(x1, y1, x2, y2)]
         if box[2] - box[0] < 2 or box[3] - box[1] < 2:
             return
+        if not page.tracking.confirm_first():
+            return
         page.add_pending_box(box)
 
     def select_at(self, x, y):
@@ -214,7 +216,7 @@ class BoxEditor:
         w, h = self._frame_size()
         species, width, height = self.copied
         width, height = min(width, w), min(height, h)
-        if width < 2 or height < 2:
+        if width < 2 or height < 2 or not page.tracking.confirm_first():
             return
         left = min(max(x * w - width / 2, 0), w - width)
         top = min(max(y * h - height / 2, 0), h - height)
@@ -309,7 +311,6 @@ class BoxEditor:
             decision=frame.decisions[index], box_edit=frame.box_edits.get(index)))
         # Keep the rejection internally so the original model box cannot reappear.
         # Preserve table indices and unrelated drafts while hiding its visible row.
-        page.tracking.restore_reopened()
         frame.decisions[index] = 'rejected'
         frame.box_edits.pop(index, None)
         page.style_decision(index)
