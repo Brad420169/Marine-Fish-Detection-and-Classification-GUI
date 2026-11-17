@@ -3,9 +3,10 @@
 Ticking Track? asks how many seconds of video to track (when the SAM model is installed;
 otherwise the copy-forward lookahead in review_tracks.py is used). SAM's video tracker
 (sam_video.py) then follows the fish through them with a progress bar (Stop keeps what
-is done), saving each box as a pending suggestion, and you check them afterwards with
-Next (tracking). Correcting a box changes only that box; the rest of the batch is kept.
-Accepting the last box offers to track more, starting from it (as corrected).
+is done), saving each box already accepted, so nothing needs ticking: browse the frames
+and move or resize any box that is off. Correcting a box changes only that box; the rest
+of the batch is kept. Tracking mode ends with the batch; tick Track? on any box (e.g. the
+last, as corrected) to track further from it.
 Track multiple fish queues several fish behind one question and one progress window;
 they are tracked one after another over the same stretch of video. When SAM decides the fish is no longer
 visible it stops and says so on that frame; it never deletes anything.
@@ -22,7 +23,7 @@ from PyQt6.QtCore import QThread, Qt
 from PyQt6.QtWidgets import QInputDialog, QProgressDialog
 
 from review_io import box_identity, model_review_row, original_box, review_box
-from review_tracks import GENERATED, VIDEO
+from review_tracks import VIDEO, unlink_suggestion, untouched_suggestion
 from sam_assist import CHECKPOINT
 from sam_video import SAMVideoWorker, VideoTracker
 
@@ -341,9 +342,9 @@ class VideoFollow:
         self._save(number, box, source)
         if number == page.frame_number:
             page.show_frame()
-            page.status.setText({'manual': 'Using your box for this fish here. Check it, then Next.',
-                                 'ai': 'Using the AI box for this fish here. Check it, then Next.'}.get(
-                source, f'SAM followed the fish to this frame (score {score:.1f}). Check the box, then Next.'))
+            page.status.setText({'manual': 'Using your box for this fish here.',
+                                 'ai': 'Using the AI box for this fish here.'}.get(
+                source, f'SAM followed the fish to this frame (score {score:.1f}).'))
         else:
             page.update_controls()
 
@@ -377,9 +378,11 @@ class VideoFollow:
                             and r.get('review_status') != 'rejected'), key=lambda r: r['frame_number'], default=None)
             if previous is None:
                 return
+            # Saved accepted, so it counts without being ticked; reviewed stays blank until
+            # someone edits it, so a restart can still replace it.
             new = dict(previous, frame_number=number, annotation_id=str(uuid4()), annotation_source='manual',
                        original_bbox='', original_species='', confidence='', track_id='', rejection_source='',
-                       review_status='pending', reviewed='', timestamp=session.timestamp(number), frame_image='',
+                       review_status='confirmed', reviewed='', timestamp=session.timestamp(number), frame_image='',
                        track_keyframe=VIDEO)
             new.update(zip(('x1', 'y1', 'x2', 'y2'), box))
             keep.append(new)
@@ -395,7 +398,9 @@ class VideoFollow:
             if (row['frame_number'] == number and (row.get('annotation_source') == 'manual') == (kind == 'manual')
                     and row.get('review_status') != 'rejected' and row.get('manual_track_id') in ('', None, self.track)
                     and box_identity(review_box(row)) == identity):
-                rows[index] = dict(row, manual_track_id=self.track)
+                # The fish's box here: an unchecked AI box is accepted, like SAM's own boxes.
+                status = 'confirmed' if row.get('review_status') == 'pending' else row.get('review_status')
+                rows[index] = dict(row, manual_track_id=self.track, review_status=status)
                 return rows
         if kind == 'manual':
             return None
@@ -405,14 +410,14 @@ class VideoFollow:
         if detection is None:
             return None
         new = model_review_row(detection, number, session.fields)
-        new.update(manual_track_id=self.track, timestamp=session.timestamp(number))
+        new.update(manual_track_id=self.track, timestamp=session.timestamp(number), review_status='confirmed')
         return rows + [new]
 
     def _remove_suggestions(self, track, after):
         """Drop this fish's unreviewed suggestions after ``after`` and unlink its unreviewed
         AI boxes there (tracking is starting over from this box)."""
         session = self.page.session
-        rows = [dict(r, manual_track_id='') if (r.get('manual_track_id') == track and r['frame_number'] > after
+        rows = [unlink_suggestion(r) if (r.get('manual_track_id') == track and r['frame_number'] > after
                                                  and r.get('annotation_source') != 'manual'
                                                  and r.get('reviewed') != 'yes') else r
                 for r in session.rows
@@ -442,7 +447,7 @@ class VideoFollow:
         message += '.'
         if self.lost_at is not None:
             message += f' It thinks the fish left or is hidden at frame {self.lost_at}.'
-        return message + ' Check each box with Next (tracking); correct any that are off.'
+        return message + ' The boxes are saved; move or resize any that are off.'
 
     def _finished(self):
         worker, self.worker = self.worker, None
@@ -460,12 +465,17 @@ class VideoFollow:
             self._next_fish()
         else:
             self._close_progress()
+            # The boxes are saved and accepted: leave tracking mode so Next and the arrows
+            # just browse them. Tick Track? on any box to carry on from it.
             if self.fish_count > 1 and self.track:
                 page.status.setText(self.multi_message())
-                page.tracking.active = None  # check every fish with plain Next
+                page.tracking.active = None
                 self.fish_count, self.multi_span = 0, None
             elif self.track:
                 page.status.setText(self.stop_progress_message())
+                if page.tracking.active == self.track:
+                    page.tracking.active = None
+            page.render()  # refresh the Track? prompt; keeps any unsaved edits on this frame
             page.sam.schedule_preload()
         page.update_controls()
 
@@ -477,14 +487,11 @@ class VideoFollow:
         lost = [f'{species} at frame {at}' for species, _, at in results if at is not None]
         if lost:
             message += ' SAM lost ' + ', '.join(lost) + '.'
-        return message + ' Check the boxes with Next, then click each fish and press Confirm track.'
+        return message + ' The boxes are saved; move or resize any that are off.'
 
     def lost_message(self):
         return ('SAM thinks the fish has left or is hidden on this frame. Draw it and tick Track? to keep '
                 'following it, or go back a frame and press Finish fish.')
 
 
-def _untouched(row):
-    """A suggested box nobody has reviewed yet."""
-    return (row.get('track_keyframe') in GENERATED and row.get('review_status') == 'pending'
-            and row.get('reviewed') != 'yes')
+_untouched = untouched_suggestion

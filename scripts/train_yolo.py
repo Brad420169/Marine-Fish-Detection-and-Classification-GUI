@@ -8,6 +8,23 @@ from dataset_validation import inspect_dataset
 
 from training_metrics import attach_metrics
 
+# Fixed training recipe for the small datasets this app exports (often tens of frames).
+# - AMP off: mixed precision skips weight updates while it calibrates, which with only a
+#   few updates per epoch wasted the first ~10 epochs and then crashed training. Older
+#   GPUs (e.g. GTX 10-series) gain no speed from it anyway.
+# - SGD at 0.01 instead of Ultralytics' "auto" (AdamW ~0.002 on small datasets), which
+#   diverged on a 29-image dataset and never recovered; SGD trained steadily.
+OPTIMIZER, LEARNING_RATE = 'SGD', 0.01
+MIN_STABLE_BATCH = 4
+
+
+def warn_small_batch(trainer):
+    """Auto batch can pick 1 or 2 for a large model on a small GPU, which trains badly."""
+    if trainer.batch_size < MIN_STABLE_BATCH:
+        print(f'WARNING: Auto batch chose {trainer.batch_size} image(s) per batch, too few to train well. '
+              'Stop, then choose a smaller starting model (e.g. yolo11s.pt), a lower image size, '
+              f'or set Batch size to at least {MIN_STABLE_BATCH}.', flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -64,14 +81,17 @@ def main():
                                      **output_options)
         return
     batch = args.batch or (-1 if device == 0 else 4)
-    print(f'Dataset: {args.data.resolve()}\nDevice: {device}\nBatch: {batch}', flush=True)
+    print(f'Dataset: {args.data.resolve()}\nDevice: {device}\nBatch: {"Auto" if batch == -1 else batch}', flush=True)
+    print(f'Optimizer: {OPTIMIZER} (learning rate {LEARNING_RATE}); mixed precision (AMP) off', flush=True)
     model = YOLO(args.model)
     attach_metrics(model)
+    model.add_callback('on_pretrain_routine_end', warn_small_batch)
     model.train(
         data=str(normalized), epochs=args.epochs, imgsz=args.imgsz,
         batch=batch, device=device, workers=0, **output_options,
         pretrained=True, patience=args.patience, save=True,
         plots=True, verbose=True, seed=42,
+        optimizer=OPTIMIZER, lr0=LEARNING_RATE, amp=False,
     )
     print(f'BEST_WEIGHTS={model.trainer.best}', flush=True)
 

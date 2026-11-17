@@ -32,6 +32,12 @@ torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/
 torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu126" }
 torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/cu126" }
 
+# Use OpenBLAS, not MKL, on Windows. MKL pulls in llvm-openmp (libomp.dll),
+# which clashes with the Intel OpenMP (libiomp5md.dll) bundled in the pip
+# torch wheel and aborts the process with "OMP: Error #15" during detection.
+[target.win-64.dependencies]
+libblas = { version = "*", build = "*openblas" }
+
 # Apple Silicon wheels come from PyPI, not the NVIDIA CUDA index.
 [target.osx-arm64.pypi-dependencies]
 torch = "==2.7.1"

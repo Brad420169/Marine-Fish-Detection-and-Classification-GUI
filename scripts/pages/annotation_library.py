@@ -1,13 +1,17 @@
 """Start a manual session or reopen project annotations."""
+import time
+
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QFrame, QSpinBox, QScrollArea, QMessageBox, QProgressDialog)
-from annotation_session import create_session
+from annotation_session import create_session, find_session, set_interval
 from ui_icons import icon, icon_label
 from widgets import VideoPathRow
 
 
 class SessionWorker(QThread):
+    progress = pyqtSignal(int, int)  # source frames read, total (while preparing a lower-FPS video)
+
     def __init__(self, project, video, interval, fps, parent):
         super().__init__(parent)
         self.args = (project, video, interval, fps)
@@ -16,9 +20,36 @@ class SessionWorker(QThread):
 
     def run(self):
         try:
-            self.root = create_session(*self.args, cancelled=self.isInterruptionRequested)
+            self.root = create_session(*self.args, cancelled=self.isInterruptionRequested,
+                                       on_progress=self.progress.emit)
         except Exception as exc:
             self.error = exc
+
+
+def _duration(seconds):
+    seconds = max(0, round(seconds))
+    return f'{seconds // 60} min {seconds % 60:02d} s' if seconds >= 60 else f'{seconds} s'
+
+
+class PreparationProgress:
+    """Fills the progress dialog while a lower-FPS working video is written."""
+
+    def __init__(self, dialog, fps):
+        self.dialog, self.fps, self.started = dialog, fps, None
+
+    def update(self, done, total):
+        dialog = self.dialog
+        now = time.monotonic()
+        if self.started is None:
+            self.started = (now, done)
+        if dialog.maximum() != total:
+            dialog.setRange(0, total)  # leaves the busy animation for a real bar
+        start, first = self.started
+        rate = (done - first) / (now - start) if now > start and done > first else 0
+        left = f' · about {_duration((total - done) / rate)} left' if rate and done < total else ''
+        dialog.setLabelText(f'Preparing a {self.fps:g} FPS working video for annotation…\n'
+                            f'{done * 100 // total}% · frame {done:,} of {total:,}{left}')
+        dialog.setValue(min(done, total))
 
 
 class AnnotationLibrary(QWidget):
@@ -68,7 +99,8 @@ class AnnotationLibrary(QWidget):
         self.new = QPushButton('Start annotating  →'); self.new.setObjectName('primaryButton')
         self.new.setMinimumHeight(36); self.new.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new.setEnabled(False); self.new.clicked.connect(self.create)
-        self.video.field.textChanged.connect(lambda path: self.new.setEnabled(bool(path.strip()) and bool(self.project)))
+        self.video.field.textChanged.connect(self._update_start_button)
+        self.video.fps_choice.currentIndexChanged.connect(self._update_start_button)
         settings.addWidget(self.new); body.addLayout(settings)
         hint = QLabel('Choose how far to advance after confirming a frame. Playback still shows every frame.')
         hint.setObjectName('muted'); hint.setWordWrap(True); body.addWidget(hint)
@@ -86,7 +118,7 @@ class AnnotationLibrary(QWidget):
         if self.project is not project:
             self.video.field.clear(); self.video._set_idle_style()
         self.project = project
-        self.new.setEnabled(bool(self.video.get_path()))
+        self._update_start_button()
         while self.session_layout.count():
             self.session_layout.takeAt(0).widget().deleteLater()
         records = [item for item in reversed(project.items) if item['kind'] == 'annotation'] + list(reversed(project.runs))
@@ -109,15 +141,47 @@ class AnnotationLibrary(QWidget):
         self.empty.setVisible(not records)
         self.sessions.setVisible(bool(records))
 
+    def _existing_session(self):
+        if not self.project or not self.video.get_path():
+            return None
+        try:
+            return find_session(self.project, self.video.get_path(), self.video.target_fps())
+        except (OSError, ValueError):
+            return None
+
+    def _update_start_button(self, *_):
+        """Say Resume when this video already has a session at this frame rate."""
+        existing = self._existing_session()
+        self.new.setText('Resume annotating  →' if existing else 'Start annotating  →')
+        self.new.setToolTip('This video already has a session at this frame rate; it opens straight away.'
+                            if existing else '')
+        self.new.setEnabled(bool(self.project) and bool(self.video.get_path()))
+
     def create(self):
         if not self.project or not self.video.get_path(): return
+        existing = self._existing_session()
+        if existing:  # already prepared: open it rather than preparing the video again
+            try:
+                set_interval(existing, self.interval.value())
+            except OSError as exc:
+                QMessageBox.warning(self, 'Cannot update frame interval', str(exc))
+            self.opened.emit(str(existing))
+            return
         self.new.setEnabled(False)
         try:
-            worker = SessionWorker(self.project, self.video.get_path(), self.interval.value(),
-                                   self.video.target_fps(), self)
-            progress = QProgressDialog('Preparing annotation video…', 'Cancel', 0, 0, self)
+            fps = self.video.target_fps()
+            worker = SessionWorker(self.project, self.video.get_path(), self.interval.value(), fps, self)
+            progress = QProgressDialog('Opening the video…', 'Cancel', 0, 0, self)
+            progress.setWindowTitle('Start annotating')
             progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+            progress.setMinimumWidth(460)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)  # the bar stays full until the session opens
             progress.canceled.connect(worker.requestInterruption)
+            # Keep a reference: PyQt holds connected methods weakly, so a temporary would be collected.
+            tracker = PreparationProgress(progress, fps) if fps is not None else None
+            if tracker:
+                worker.progress.connect(tracker.update)
             worker.finished.connect(progress.accept)
             worker.start()
             progress.exec()
@@ -132,7 +196,7 @@ class AnnotationLibrary(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Cannot create annotation session', str(exc)); return
         finally:
-            self.new.setEnabled(bool(self.video.get_path()))
+            self._update_start_button()
         self.set_project(self.project)
         self.opened.emit(str(root))
 

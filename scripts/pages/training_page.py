@@ -182,6 +182,8 @@ class TrainingPage(QWidget):
     def _model_changed(self):
         if self.model.currentData() in ('yolo11n.pt', 'yolo11s.pt'):
             self.model_note.setText('Starting from general COCO-pretrained YOLO11 weights.')
+        elif self.model.currentText().startswith('Annotation model'):
+            self.model_note.setText('Fine-tuning the model that annotated this dataset. New weights will be saved separately.')
         else:
             self.model_note.setText('Fine-tuning the selected YOLO weights. New weights will be saved separately.')
 
@@ -256,10 +258,11 @@ class TrainingPage(QWidget):
 
     def show_previews(self, info):
         import cv2
+        from image_io import imread
         from PyQt6.QtGui import QImage, QPixmap
         images = [paths[0] for paths in info['images'].values() if paths]
         for preview, path in zip(self.previews, images):
-            frame = cv2.imread(str(path))
+            frame = imread(path)
             if frame is None:
                 preview.setText('Image preview unavailable'); preview.show(); continue
             height, width = frame.shape[:2]
@@ -401,7 +404,23 @@ class TrainingPage(QWidget):
         for button in self.reuse_buttons:
             button.setEnabled(enabled and bool(self.best_weights and self.best_weights.is_file()))
 
+    def _offer_source_model(self):
+        """Add the detector that annotated this dataset to Starting model, and select it."""
+        from yolo_export import source_model
+        for index in range(self.model.count() - 1, 1, -1):
+            if self.model.itemText(index).startswith('Annotation model'):
+                self.model.removeItem(index)
+        text = self.dataset.text().strip()
+        weights = source_model(text) if text else None
+        if weights is None:
+            return
+        self.model.addItem(f'Annotation model ({weights.name})', str(weights.resolve()))
+        self.model.setCurrentIndex(self.model.count() - 1)
+        if self.run_name.text() == 'fish_yolo11s':  # still the default: name it after this model
+            self.run_name.setText(f'fish_{weights.stem}')
+
     def _dataset_changed(self):
+        self._offer_source_model()
         self.best_weights = None
         self.evaluate.setEnabled(False)
         self.dataset_summary.setText('Dataset changed. Validate it before training.')

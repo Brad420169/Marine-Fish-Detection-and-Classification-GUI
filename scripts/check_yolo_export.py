@@ -6,6 +6,7 @@ import tempfile
 import cv2
 import numpy as np
 
+from image_io import imwrite
 from pipeline import SUMMARY_FIELDS
 from review_io import save_rows
 from review_store import ReviewStore
@@ -26,7 +27,7 @@ def main():
         (root / 'original_detections.json').write_text(json.dumps(original))
         images = root / 'review_frames'; images.mkdir()
         for number in range(1, 4):
-            assert cv2.imwrite(str(images / f'frame_{number:06d}.jpg'), np.zeros((100, 100, 3), np.uint8))
+            assert imwrite(str(images / f'frame_{number:06d}.jpg'), np.zeros((100, 100, 3), np.uint8))
         fields = ['frame_number', 'species', 'x1', 'y1', 'x2', 'y2', 'review_status',
                   'annotation_source', 'annotation_id']
         fields.append('reviewed')

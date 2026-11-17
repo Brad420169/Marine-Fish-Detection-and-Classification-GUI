@@ -7,6 +7,7 @@ import tempfile
 
 import cv2
 
+from image_io import imread
 from pipeline import SUMMARY_FIELDS, extract_maxn_example_frames, format_timestamp
 from review_io import save_rows, original_box, review_box, box_identity
 import review_store
@@ -142,7 +143,7 @@ def refresh_results(root):
             for row in rows:
                 number = row['max_n_frame']
                 image = root/'review_frames'/f'frame_{number:06d}.jpg'
-                raw = cv2.imread(str(image)) if image.exists() else None
+                raw = imread(str(image)) if image.exists() else None
                 if raw is None and cap is not None and cap.isOpened():
                     cap.set(cv2.CAP_PROP_POS_FRAMES, number-1)
                     ok, raw = cap.read()
@@ -162,15 +163,18 @@ def refresh_results(root):
         try:
             for name in names:
                 target = root/name
+                busy = name  # Windows can't replace a file another program (e.g. Excel) has open
                 if target.exists(): target.rename(backups/name)
                 published.append(name)
                 (stage/name).rename(target)
-        except OSError:
+        except OSError as exc:
             for name in reversed(published):
                 target = root/name
                 if target.is_dir(): shutil.rmtree(target)
                 else: target.unlink(missing_ok=True)
                 if (backups/name).exists(): (backups/name).rename(target)
+            if isinstance(exc, PermissionError):
+                raise PermissionError(f'Close {busy} in Excel (or any other program using it), then try again.') from exc
             raise
     return len(rows), len(snapshots) < len(rows)
 

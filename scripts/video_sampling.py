@@ -15,7 +15,8 @@ def video_fps(path):
         cap.release()
 
 
-def prepare_video(source, destination, target_fps=None, cancelled=lambda: False):
+def prepare_video(source, destination, target_fps=None, cancelled=lambda: False, on_progress=None):
+    """Write a lower-frame-rate copy. ``on_progress(done, total)`` reports source frames read."""
     source, destination = Path(source), Path(destination)
     fps = video_fps(source)
     if target_fps is None:
@@ -30,6 +31,8 @@ def prepare_video(source, destination, target_fps=None, cancelled=lambda: False)
     writer = None
     try:
         size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        total = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))  # container estimate
+        step = max(1, total // 200)  # about 200 updates however long the video
         writer = cv2.VideoWriter(str(temporary), cv2.VideoWriter_fourcc(*'mp4v'), target_fps, size)
         if not writer.isOpened():
             raise OSError('Could not create the lower-FPS working video.')
@@ -40,6 +43,8 @@ def prepare_video(source, destination, target_fps=None, cancelled=lambda: False)
             ok, frame = cap.read()
             if not ok:
                 break
+            if on_progress and index % step == 0:
+                on_progress(min(index, total), total)
             # Sample at output timestamps; never slow down playback by merely
             # changing the file's FPS header.
             if index >= math.floor(written * fps / target_fps + 1e-8):
@@ -48,6 +53,8 @@ def prepare_video(source, destination, target_fps=None, cancelled=lambda: False)
             index += 1
         if not written:
             raise ValueError('The video contains no readable frames.')
+        if on_progress:
+            on_progress(total, total)
         writer.release(); writer = None
         check = cv2.VideoCapture(str(temporary))
         try:

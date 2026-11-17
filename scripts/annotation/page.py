@@ -19,6 +19,7 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QCompleter, QDialog, QHBoxLayout,
                              QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
+from image_io import imwrite
 from review_io import ReviewVideoWorker, draw_review, original_box
 from review_summary import RefreshWorker, results_need_refresh
 from review_tracks import create_track
@@ -768,7 +769,7 @@ class ReviewPage(QWidget):
             folder.mkdir(exist_ok=True)
             target = folder / f'frame_{self.frame_number:06d}.jpg'
             temporary = target.with_name(target.stem + '.tmp.jpg')
-            if not cv2.imwrite(str(temporary), draw_review(self.raw, self.current(), context=self.frame_context())):
+            if not imwrite(str(temporary), draw_review(self.raw, self.current(), context=self.frame_context())):
                 raise OSError('Could not write reviewed image.')
             temporary.replace(target)
             self.status.setText('Saved. Ready for dataset export.' if session.manual_session else

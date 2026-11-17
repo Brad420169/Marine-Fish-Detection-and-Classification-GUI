@@ -41,9 +41,9 @@ TIPS = (
         ('1', '<b>Click any box</b> (AI, SAM or yours) and tick <b>Track?</b>. Choose how many seconds.'),
         ('2', '<b>Wait for the bar.</b> Boxes of the same class already there are reused, so SAM only fills '
               'the gaps. <b>Stop</b> keeps what is done.'),
-        ('3', '<b>Check each frame</b> with <b>Next (tracking)</b>. Fix any wrong box; only that box changes.'),
-        ('4', '<b>Click one of its boxes</b> and press <b>Confirm track</b> to accept them all. '
-              'A new box waits until the track is confirmed.'),
+        ('3', '<b>The boxes are saved</b>; nothing needs ticking. Browse the frames and move or resize any '
+              'box that is off; only that box changes.'),
+        ('4', '<b>Track further</b>: click its last box and tick <b>Track?</b> again.'),
         ('Several', '<b>Track multiple fish</b>, click each fish, then <b>Enter</b>: one question, all tracked.'),
         ('Tip', 'Name the track like the detector\'s class (e.g. <i>fish</i>) so its AI boxes are reused.'),
     )),

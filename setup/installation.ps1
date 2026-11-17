@@ -106,6 +106,14 @@ try {
         & pixi install --locked
         if ($LASTEXITCODE -ne 0) { throw 'Pixi installation failed.' }
         Write-Host 'Pixi environment installed.'
+        $Step = 'Installing SAM 2.1 Tiny model for SAM-assisted annotation'
+        $SamModel = Join-Path $ProjectDir 'models\sam\sam2.1_t.pt'
+        Write-Host "$Step (75 MiB) into $SamModel..."
+        # scripts/sam_assist.py downloads to models\sam\ in this checkout and skips an existing file.
+        & pixi run --locked setup-sam
+        if ($LASTEXITCODE -ne 0) { throw "SAM model download failed. Run 'pixi run setup-sam' from $ProjectDir to retry." }
+        if (-not (Test-Path -LiteralPath $SamModel)) { throw "SAM model not found at $SamModel." }
+        Write-Host 'SAM model installed.'
         $Step = 'Setting up desktop and Start menu shortcuts'
         Write-Host "$Step..."
         & powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_shortcut.ps1

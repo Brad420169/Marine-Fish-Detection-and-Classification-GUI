@@ -225,7 +225,7 @@ The annotation page places the video frame in the centre, missed-fish annotation
 
 ### SAM-assisted annotation
 
-SAM 2.1 Tiny uses the existing Ultralytics/PyTorch environment. Install its optional **75 MiB** checkpoint once from the app folder:
+SAM 2.1 Tiny uses the existing Ultralytics/PyTorch environment. Both installation scripts download its **75 MiB** checkpoint to `models/sam/sam2.1_t.pt` in the installed application. For a copy installed another way (for example a manual clone), install it once from the app folder:
 
 ```bash
 pixi run setup-sam
@@ -288,15 +288,14 @@ The **Track?** toggle follows one fish at a time. It checks up to **three frames
 When the SAM model is installed (`pixi run setup-sam`), steps 2–4 work differently. SAM 2's video tracker follows the fish instead of copying its box forward:
 
 - **Ticking Track? asks how many seconds of video to track** (1 s by default; the question shows how much video is left). SAM then works through those frames while a progress bar shows the seconds done out of the seconds asked (**x / y s**) and the estimated time left. To keep this quick on a CPU (about a second per frame), SAM only looks at a square window around the fish, about four times its size, which follows the fish from frame to frame; if the fish swims close and fills the window, SAM restarts with a bigger one. **Stop** keeps the boxes already made.
-- **Afterwards, check the boxes** with **Next (tracking)**. Each one is a pending suggestion.
-  - **Accept a box** and SAM keeps its memory of the fish.
-  - **Correct a box** (move or resize it) before pressing Next. Only that box changes; the rest of the batch is kept.
-  - **Accept the last box** of a batch and you are asked whether to track more frames. Tracking continues from that box, including any correction you made to it.
+- **The boxes are saved, already accepted.** Nothing needs ticking or confirming; they count in results and dataset export straight away. When the batch ends the page leaves tracking mode, so **Next** and the arrow keys just move between frames.
+  - **Correct a box** by moving or resizing it. Only that box changes; the rest of the batch is kept.
+  - **Delete** removes just the selected box; the fish's other boxes stay.
+  - **To track further**, click the fish's last box (corrected if needed) and tick **Track?** again. Tracking continues from that box and replaces this fish's later boxes that nobody has edited.
 - **Existing boxes come first.** Each frame is checked before SAM runs. If it already has a box of the same class as the track (ignoring capitals) where the fish just was, that box is used and linked to the track, and SAM skips the frame. It does not matter what made the box: you, SAM or the detector. Boxes on another fish's track are left alone. SAM only runs on frames without such a box, starting from the last good box. If two boxes are equally close (two fish together), SAM decides. A track's class is whatever you name it, so name it the same as the detector's class (for example `fish`) for AI boxes to be used.
 - **You can start a track from any box.** Clicking an AI box (or your own) shows **Track?** for it.
-- **Track multiple fish.** Press **Track multiple fish** (under the Annotations list), click each fish you want (selected fish get a cyan outline; click again to unselect), then press **Enter**. You are asked for the number of seconds once, and SAM tracks the fish one after another in a single progress window ("Fish 2 of 3"). **Stop** ends the whole batch, keeping what is done. Afterwards check the boxes with **Next** and press **Confirm track** on each fish. **Esc** cancels the selection. Save any new boxes before starting.
-- **After Finish fish, Delete removes just the selected box.** Use it for the odd bad box in a batch; the fish's other boxes stay, and the gap is not filled in again. While you are still following the fish, deleting its box ends the track on that frame instead.
-- **When SAM decides the fish has left or is hidden**, it stops at that frame and says so. Nothing is deleted. Draw the fish again and tick **Track?** to keep following it, or go back a frame and press **Finish fish**.
+- **Track multiple fish.** Press **Track multiple fish** (under the Annotations list), click each fish you want (selected fish get a cyan outline; click again to unselect), then press **Enter**. You are asked for the number of seconds once, and SAM tracks the fish one after another in a single progress window ("Fish 2 of 3"). **Stop** ends the whole batch, keeping what is done. The boxes are saved already accepted; correct any that are off. **Esc** cancels the selection. Save any new boxes before starting.
+- **When SAM decides the fish has left or is hidden**, it stops at that frame and says so, keeping the boxes before it. Nothing is deleted. Draw the fish again and tick **Track?** to keep following it.
 
 Without the SAM model, tracking uses the three-frame lookahead described above.
 

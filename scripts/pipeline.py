@@ -17,6 +17,7 @@ from typing import Any, Callable
 import cv2
 
 from detectors import load_detector
+from image_io import imwrite
 
 
 # Constants
@@ -299,7 +300,7 @@ def extract_maxn_example_frames(
             f"{rank:02d}_{safe_species}_maxn{max_n}_{safe_time}.jpg"
         )
 
-        if cv2.imwrite(str(image_path), frame):
+        if imwrite(str(image_path), frame):
             saved.append(image_path)
 
     return saved
@@ -416,7 +417,7 @@ def run_pipeline(
             return f"{REVIEW_FRAMES_DIRNAME}/frame_{frame_number:06d}.jpg"
         review_frames_dir.mkdir(parents=True, exist_ok=True)
         image_path = review_frames_dir / f"frame_{frame_number:06d}.jpg"
-        if cv2.imwrite(str(image_path), frame_bgr):
+        if imwrite(str(image_path), frame_bgr):
             saved_review_frames.add(frame_number)
             return f"{REVIEW_FRAMES_DIRNAME}/frame_{frame_number:06d}.jpg"
         return ""

@@ -7,6 +7,7 @@ import tempfile
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from image_io import imread, imwrite
 import review_store
 from review_summary import merge_detections
 
@@ -39,6 +40,30 @@ def split_counts(total, train_percent, val_percent):
     return train, val, total - train - val
 
 
+SOURCE_MODEL = 'source_model.json'  # beside data.yaml: {"weights": path of the run's detector}
+
+
+def source_model(data_yaml):
+    """The YOLO weights that annotated an exported dataset, or None.
+
+    Read from source_model.json beside data.yaml; datasets exported before that file
+    existed are found through their run's original_detections.json when they sit in
+    the run's default yolo_dataset folder. Only existing .pt files count (the YOLO
+    trainer cannot fine-tune RF-DETR .pth or Darknet .weights).
+    """
+    folder = Path(data_yaml).expanduser().parent
+    weights = ''
+    for path, key in ((folder / SOURCE_MODEL, 'weights'), (folder.parent / 'original_detections.json', 'weights_path')):
+        try:
+            weights = json.loads(path.read_text(encoding='utf-8')).get(key) or ''
+        except (OSError, ValueError, AttributeError):
+            continue
+        if weights:
+            break
+    weights = Path(weights) if weights else None
+    return weights if weights and weights.suffix.lower() == '.pt' and weights.is_file() else None
+
+
 def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
     root, destination = Path(root), Path(destination).expanduser().resolve()
     original, rows, numbers = reviewed_frames(root)
@@ -67,7 +92,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
             for index, number in enumerate(numbers):
                 split = 'train' if index < train_count else 'val' if index < train_count + val_count else 'test'
                 image = root / 'review_frames' / f'frame_{number:06d}.jpg'
-                frame = cv2.imread(str(image)) if image.is_file() else None
+                frame = imread(str(image)) if image.is_file() else None
                 if frame is None and capture is not None:
                     capture.set(cv2.CAP_PROP_POS_FRAMES, number - 1)
                     ok, frame = capture.read()
@@ -79,7 +104,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
                 if width <= 0 or height <= 0:
                     raise ValueError(f'Frame {number} has invalid dimensions.')
                 stem = f'frame_{number:06d}'
-                if not cv2.imwrite(str(stage / 'images' / split / f'{stem}.jpg'), frame):
+                if not imwrite(str(stage / 'images' / split / f'{stem}.jpg'), frame):
                     raise OSError(f'Could not save frame {number}.')
                 labels = []
                 for det in merged.get(number, []):
@@ -96,6 +121,9 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
             yaml = ['train: images/train', 'val: images/val', 'test: images/test', 'names:']
             yaml.extend(f'  {index}: {json.dumps(name, ensure_ascii=False)}' for index, name in enumerate(names))
             (stage / 'data.yaml').write_text('\n'.join(yaml) + '\n', encoding='utf-8')
+            # The detector that annotated the run, so Train a Model can offer to fine-tune it.
+            if original.get('weights_path'):
+                (stage / SOURCE_MODEL).write_text(json.dumps({'weights': original['weights_path']}), encoding='utf-8')
             stage.rename(destination)
     finally:
         if capture is not None:

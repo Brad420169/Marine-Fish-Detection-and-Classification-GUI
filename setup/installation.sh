@@ -110,6 +110,16 @@ echo "$STEP (approximately 8.3 GB installed on Linux; macOS size varies). Please
 echo 'Allow at least 15 GB free disk space including download caches. Downloads may take several minutes.'
 pixi install --locked
 echo 'Pixi environment installed.'
+STEP='Installing SAM 2.1 Tiny model for SAM-assisted annotation'
+SAM_MODEL="$PROJECT_DIR/models/sam/sam2.1_t.pt"
+echo "$STEP (75 MiB) into $SAM_MODEL..."
+# scripts/sam_assist.py downloads to models/sam/ in this checkout and skips an existing file.
+pixi run --locked setup-sam
+if [[ ! -f "$SAM_MODEL" ]]; then
+    echo "SAM model not found at $SAM_MODEL. Run 'pixi run setup-sam' from $PROJECT_DIR to retry." >&2
+    exit 1
+fi
+echo 'SAM model installed.'
 STEP='Setting up desktop shortcut'
 echo "$STEP..."
 bash "setup/$SHORTCUT"

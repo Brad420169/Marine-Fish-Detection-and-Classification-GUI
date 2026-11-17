@@ -9,6 +9,7 @@ from pathlib import Path
 
 import cv2
 
+from image_io import imread, imwrite
 from pipeline import format_timestamp
 from review_io import context_for, load_species_names
 from review_store import ReviewStore
@@ -170,7 +171,7 @@ class ReviewSession:
         relative = f'review_frames/frame_{number:06d}.jpg'
         target = self.root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists() and not cv2.imwrite(str(target), raw):
+        if not target.exists() and not imwrite(str(target), raw):
             raise OSError('Could not write the frame image.')
         context = self.root / 'review_frames' / f'frame_{number:06d}.json'
         if not context.exists():
@@ -182,5 +183,5 @@ class ReviewSession:
         if rows and rows[0].get('frame_image'):
             saved = self.root / rows[0]['frame_image']
             if saved.is_file():
-                return cv2.imread(str(saved))
+                return imread(str(saved))
         return None

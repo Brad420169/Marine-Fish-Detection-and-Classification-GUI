@@ -9,6 +9,22 @@ INTERPOLATED, COPIED, VIDEO = 'sam_pending', 'sam_copy', 'sam_video'
 GENERATED = (INTERPOLATED, COPIED, VIDEO)
 
 
+def untouched_suggestion(row):
+    """A box a tracker made that nobody has edited or reviewed yet.
+
+    SAM video boxes are saved already accepted (confirmed) so nobody has to tick them,
+    and lookahead boxes wait as pending; either way, until someone edits one, starting
+    the track again or finishing the fish may replace or remove it.
+    """
+    return (row.get('track_keyframe') in GENERATED and row.get('review_status') != 'rejected'
+            and row.get('reviewed') != 'yes')
+
+
+def unlink_suggestion(row):
+    """An unreviewed AI box taken off a track goes back to an unchecked detection."""
+    return dict(row, manual_track_id='', review_status='pending')
+
+
 def create_track(rows, source):
     """Start a track from a saved box: a manual annotation or an AI detection.
 
@@ -92,12 +108,9 @@ def end_track(rows, track_id, frame_number):
     def later(r):
         return r.get('manual_track_id') == track_id and int(r['frame_number']) > frame_number
 
-    def unreviewed_suggestion(r):
-        return (r.get('track_keyframe') in GENERATED and r.get('review_status') == 'pending'
-                and r.get('reviewed') != 'yes')
-    rows = [r for r in rows if not (later(r) and unreviewed_suggestion(r))]
-    # An unreviewed AI detection linked by the lookahead is just unlinked, not rejected.
-    rows = [dict(r, manual_track_id='') if later(r) and r.get('annotation_source') != 'manual'
+    rows = [r for r in rows if not (later(r) and untouched_suggestion(r))]
+    # An unreviewed AI detection linked by a tracker is just unlinked, not rejected.
+    rows = [unlink_suggestion(r) if later(r) and r.get('annotation_source') != 'manual'
             and r.get('reviewed') != 'yes' else r for r in rows]
     return [dict(r, review_status='rejected', reviewed='yes') if later(r)
             else dict(r, track_keyframe='end')
