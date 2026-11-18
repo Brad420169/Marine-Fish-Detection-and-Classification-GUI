@@ -12,7 +12,7 @@ from ui_icons import icon, icon_text
 import shutil
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
@@ -393,6 +393,106 @@ class LabeledNumber(QWidget):
 
     def value(self) -> float:
         return self.value_box.value()
+
+
+class CheckableComboBox(QComboBox):
+    """A drop-down whose items have tick boxes; it stays open while you tick several.
+
+    Clicks on the open list are handled here (a click anywhere on an item, box or name,
+    ticks or unticks it) so the list neither closes nor selects; Space does the same for
+    the highlighted item. Esc or a click outside closes it.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, placeholder="Choose…", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PyQt6.QtGui import QStandardItemModel
+        from PyQt6.QtWidgets import QStyledItemDelegate
+        self.placeholder = placeholder
+        self.setModel(QStandardItemModel(self))
+        self.setItemDelegate(QStyledItemDelegate(self))  # the combo's own delegate ignores tick-box styling
+        # Show a box beside every item, like the app's tick boxes.
+        tick = (ROOT_DIR / 'assets' / 'check_blue.svg').as_posix()
+        self.view().setStyleSheet(
+            'QAbstractItemView::indicator { width: 17px; height: 17px; border-radius: 4px; '
+            'border: 1px solid #70a3bf; background: #082b40; }'
+            f'QAbstractItemView::indicator:checked {{ image: url({tick}); }}'
+            'QAbstractItemView::item { padding: 4px; }')
+        self.view().viewport().installEventFilter(self)
+        self.view().installEventFilter(self)
+        self._filling = False
+        self.model().dataChanged.connect(self._ticks_changed)
+        self._update_text()
+
+    def set_items(self, items):
+        """Replace the items with (text, data) pairs, keeping ticks on data still listed."""
+        from PyQt6.QtGui import QStandardItem
+        ticked = set(self.checked_data())
+        # Not blockSignals: the list must hear about the new rows, or the popup opens with no height.
+        self._filling = True
+        self.model().clear()
+        for text, data in items:
+            item = QStandardItem(text)
+            item.setData(data, Qt.ItemDataRole.UserRole)
+            item.setToolTip(str(data))
+            # Not "user checkable": the view would toggle it too, undoing our tick.
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            item.setCheckState(Qt.CheckState.Checked if data in ticked else Qt.CheckState.Unchecked)
+            self.model().appendRow(item)
+        self._filling = False
+        self._update_text()
+        self.changed.emit()
+
+    def _ticks_changed(self, *_):
+        if not self._filling:
+            self._update_text()
+            self.changed.emit()
+
+    def checked_data(self):
+        model = self.model()
+        return [model.item(row).data(Qt.ItemDataRole.UserRole) for row in range(model.rowCount())
+                if model.item(row).checkState() == Qt.CheckState.Checked]
+
+    def showPopup(self):
+        super().showPopup()
+        # The popup is built on first use and puts its own click handling first; re-register
+        # ours so it runs before it and the list stays open while ticking.
+        for widget in (self.view().viewport(), self.view()):
+            widget.removeEventFilter(self)
+            widget.installEventFilter(self)
+
+    def toggle_row(self, row):
+        item = self.model().item(row)
+        if item is not None:
+            item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked
+                               else Qt.CheckState.Checked)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        kind = event.type()
+        if obj is self.view().viewport() and kind in (QEvent.Type.MouseButtonPress,
+                                                     QEvent.Type.MouseButtonRelease,
+                                                     QEvent.Type.MouseButtonDblClick):
+            index = self.view().indexAt(event.position().toPoint())
+            if index.isValid():
+                if kind == QEvent.Type.MouseButtonRelease:
+                    self.toggle_row(index.row())
+                return True  # keep the list open; no selection
+        if obj is self.view() and kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+            self.toggle_row(self.view().currentIndex().row())
+            return True
+        if obj in (self.view(), self.view().viewport()):
+            return False  # everything else (layout, painting) belongs to the list itself
+        return super().eventFilter(obj, event)
+
+    def _update_text(self):
+        count = len(self.checked_data())
+        total = self.model().rowCount()
+        text = (f'{count} of {total} datasets ticked' if count else
+                self.placeholder if total else 'No exported datasets in this project yet')
+        self.setPlaceholderText(text)
+        self.setCurrentIndex(-1)
 
 
 def settings_slider(self, layout, title, minimum, maximum, value, explanation):

@@ -65,7 +65,7 @@ class TrackingController:
         enabled = bool(source.get('manual_track_id'))
         page.track_yes.setChecked(enabled)
         page.track_no.setChecked(not enabled)
-        page.track_yes.setEnabled(bool(page.video_reader) and page.frame_number < page.total_frames)
+        page.track_yes.setEnabled(bool(page.video_reader) and page.total_frames > 1)  # back and/or forward
         page.track_prompt.setToolTip(f'Track {source["species"]} into the next frames. Optional; off by default.')
         unchecked = len(self.unchecked_boxes(source.get('manual_track_id')))
         page.confirm_track.setVisible(bool(unchecked))
@@ -279,7 +279,7 @@ class TrackingController:
         page.nav.advance()
         if self.video.following(self.active):
             if page.frame_number == self.video.lost_at:
-                page.status.setText(self.video.lost_message())
+                page.status.setText('SAM thinks the fish leaves or hides on this frame.')
             elif self.video.waiting(page.frame_number):
                 page.status.setText('SAM is following the fish to this frame…')
         elif self.active and not self.is_active():

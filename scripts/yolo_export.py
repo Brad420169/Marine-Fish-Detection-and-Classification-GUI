@@ -1,6 +1,7 @@
 """Export fully reviewed video frames as a YOLO detection dataset."""
 import json
 import math
+import re
 from pathlib import Path
 import tempfile
 
@@ -10,6 +11,46 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from image_io import imread, imwrite
 import review_store
 from review_summary import merge_detections
+
+
+def folder_name(text, fallback='video'):
+    """A folder name that is safe on Windows, macOS and Linux, from a video's name."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]+', '_', str(text)).strip(' .') or fallback
+
+
+def unique_path(path):
+    """``path``, or ``path_2``, ``path_3``... if it is already taken."""
+    path, number = Path(path), 2
+    candidate = path
+    while candidate.exists():
+        candidate, number = path.with_name(f'{path.name}_{number}'), number + 1
+    return candidate
+
+
+def video_stem(root):
+    """The name (without extension) of the video a run or annotation session came from, or ''."""
+    try:
+        meta = json.loads((Path(root) / 'original_detections.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return ''
+    return Path(meta.get('video') or meta.get('original_video') or meta.get('source_video') or '').stem
+
+
+def default_dataset_path(root):
+    """Where a run's dataset is exported by default: <video name>_yolo_dataset inside the run."""
+    stem = video_stem(root)
+    return unique_path(Path(root) / (f'{folder_name(stem)}_yolo_dataset' if stem else 'yolo_dataset'))
+
+
+def dataset_label(yaml_path):
+    """A readable name for a dataset: its folder, or for an older plain "yolo_dataset" folder,
+    the video it came from."""
+    folder = Path(yaml_path).parent
+    if folder.name == 'yolo_dataset':
+        stem = video_stem(folder.parent)
+        if stem:
+            return f'{stem} (yolo_dataset)'
+    return folder.name
 
 
 def checked(row):
@@ -64,7 +105,10 @@ def source_model(data_yaml):
     return weights if weights and weights.suffix.lower() == '.pt' and weights.is_file() else None
 
 
-def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
+def export_yolo_dataset(root, destination, train_percent=70, val_percent=20, progress=None, cancelled=None):
+    """Write a YOLO dataset of the run's frames with checked boxes. ``progress(done, total)``
+    is called after each frame; ``cancelled()`` returning True stops the export (raises
+    InterruptedError) and nothing is left behind."""
     root, destination = Path(root), Path(destination).expanduser().resolve()
     original, rows, numbers = reviewed_frames(root)
     train_count, val_count, _ = split_counts(len(numbers), train_percent, val_percent)
@@ -90,6 +134,8 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
                 (stage / 'images' / split).mkdir(parents=True)
                 (stage / 'labels' / split).mkdir(parents=True)
             for index, number in enumerate(numbers):
+                if cancelled and cancelled():
+                    raise InterruptedError('Export stopped; nothing was saved.')
                 split = 'train' if index < train_count else 'val' if index < train_count + val_count else 'test'
                 image = root / 'review_frames' / f'frame_{number:06d}.jpg'
                 frame = imread(str(image)) if image.is_file() else None
@@ -118,6 +164,8 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
                     labels.append(f"{class_ids[det['species']]} {(x1+x2)/(2*width):.6f} "
                                   f"{(y1+y2)/(2*height):.6f} {(x2-x1)/width:.6f} {(y2-y1)/height:.6f}")
                 (stage / 'labels' / split / f'{stem}.txt').write_text('\n'.join(labels) + ('\n' if labels else ''), encoding='utf-8')
+                if progress:
+                    progress(index + 1, len(numbers))
             yaml = ['train: images/train', 'val: images/val', 'test: images/test', 'names:']
             yaml.extend(f'  {index}: {json.dumps(name, ensure_ascii=False)}' for index, name in enumerate(names))
             (stage / 'data.yaml').write_text('\n'.join(yaml) + '\n', encoding='utf-8')
@@ -132,6 +180,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20):
 
 
 class ExportWorker(QThread):
+    progress = pyqtSignal(int, int)  # frames written, frames in total
     succeeded = pyqtSignal(str, tuple)
     failed = pyqtSignal(str)
 
@@ -142,8 +191,8 @@ class ExportWorker(QThread):
 
     def run(self):
         try:
-            yaml, counts = export_yolo_dataset(self.root, self.destination,
-                                                self.train_percent, self.val_percent)
+            yaml, counts = export_yolo_dataset(self.root, self.destination, self.train_percent, self.val_percent,
+                                                self.progress.emit, self.isInterruptionRequested)
             self.succeeded.emit(str(yaml), counts)
         except Exception as exc:
             self.failed.emit(str(exc))

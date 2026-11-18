@@ -6,7 +6,7 @@ exist before build() runs.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QScrollArea, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QSizePolicy, QTableWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from ui_icons import icon
@@ -31,17 +31,22 @@ def build(page):
     root.setSpacing(8)
     root.addLayout(_header(page))
 
+    # The Annotations panel runs the full height on the left (room for a long species list);
+    # the frame, preview, detections and tips share the space to its right.
+    body = QHBoxLayout()
+    body.addWidget(_annotations_panel(page))
+    right = QVBoxLayout()
     images = QHBoxLayout()
-    images.addWidget(_annotations_panel(page))
     page.image = _canvas(page)
     images.addWidget(page.image, 1)
     images.addWidget(_preview_panel(page))
-    root.addLayout(images, 1)
-
+    right.addLayout(images, 1)
     review_panels = QHBoxLayout()
     review_panels.addWidget(_detections_panel(page), 3)
     review_panels.addWidget(_tips_panel(), 2)
-    root.addLayout(review_panels)
+    right.addLayout(review_panels)
+    body.addLayout(right, 1)
+    root.addLayout(body, 1)
     page.status = QLabel()
     page.status.setWordWrap(True)
     root.addWidget(page.status)
@@ -218,8 +223,10 @@ def _detections_panel(page):
     page.table.cellClicked.connect(page.select_row)
     page.table.horizontalHeader().setStretchLastSection(True)
     panel = QGroupBox('Detections in this frame')
-    QVBoxLayout(panel).addWidget(page.table)
-    return panel
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(10, 18, 10, 8)
+    layout.addWidget(page.table)
+    return panel  # the row is only as tall as the tips (capped), so the video gets the rest
 
 
 def _tips_panel():
@@ -235,10 +242,19 @@ def _tips_panel():
         tips.setWordWrap(True)
         tips.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         tips.setContentsMargins(4, 6, 4, 2)
-        tabs.addTab(tips, title)
+        # In a frameless scroll area, so a long tab cannot force the row (and so the video) shorter.
+        scroll = QScrollArea()
+        scroll.setWidget(tips)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet('QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }')
+        tabs.addTab(scroll, title)
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(8, 14, 8, 6)
     layout.addWidget(tabs)
+    tabs.setMaximumHeight(200)  # about six tip lines; the rest of the height goes to the video
+    panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)  # no empty space below the tips
     return panel
 
 

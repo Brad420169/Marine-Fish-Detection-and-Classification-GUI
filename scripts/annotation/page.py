@@ -158,9 +158,10 @@ class ReviewPage(QWidget):
         for i, row in enumerate(rows):
             self.add_table_row(i, row)
             self.table.setRowHidden(i, row.get('reviewed') == 'yes')
-        self.table.setColumnWidth(0, 230)
+        # Narrower since the Annotations panel runs the full height: leave room for the decision text.
+        self.table.setColumnWidth(0, 180)
         self.table.setColumnWidth(1, 90)
-        self.table.setColumnWidth(2, 230)
+        self.table.setColumnWidth(2, 200)
         self.raw = self.load_frame_image()
         self.update_controls()
         self.loading = False
@@ -196,7 +197,7 @@ class ReviewPage(QWidget):
             self.next_button.setToolTip("Accept this fish's box and go to the next frame." if tracking else
                                         'Save your edits on this frame and go to the next one (Right arrow).')
         self.multi_button.setEnabled(idle and self.raw is not None and self.tracking.video.enabled
-                                     and self.frame_number < self.total_frames)
+                                     and self.total_frames > 1)
         self.finish_fish.setVisible(tracking)
         self.finish_fish.setEnabled(idle and self.raw is not None)
         self.play_button.setEnabled(bool(self.video_reader) and idle and self.total_frames > 1)

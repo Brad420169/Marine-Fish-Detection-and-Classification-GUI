@@ -3,7 +3,8 @@
 SAM 2 remembers how the fish looked on recent frames and uses that memory to find
 it on the next one, and it scores whether the fish is visible at all. Ultralytics'
 video predictor normally runs a whole video from frame 1; VideoTracker feeds it
-frames one at a time instead, so tracking can start on any frame.
+frames one at a time instead, so tracking can start on any frame and run forwards or
+backwards (SAM just sees the frames in the order it is given them).
 
 Frames that already have a box for the fish (any box of the track's class where the
 fish should be: drawn by you, by SAM or by the detector) use that box and skip SAM; SAM only runs on the frames without one, starting each time from the last good box.
@@ -30,6 +31,10 @@ MIN_WINDOW = 384      # smallest window, in video pixels
 GROW_AT = 0.5         # restart with a bigger window once the fish is this fraction of it
 AI_OVERLAP = 0.3      # an existing box must overlap the fish's last box this much to be the same fish
 AI_MARGIN = 0.05      # two boxes closer than this in overlap are too close to tell apart
+UNSURE_SCORE = 2.0    # SAM object scores between 0 and this count as unsure (worth a look)
+GRACE_SECONDS = 1.0   # SAM must miss the fish this long in a row before it counts as gone
+REFOUND_FRAMES = 3    # frames after SAM finds a hidden fish again: flagged, in case it found another fish
+BACKFILL = 24         # frames decoded at once when tracking backwards (seeking each frame is slow)
 
 
 def mask_box(mask):
@@ -82,6 +87,7 @@ class VideoTracker:
         self.predictor = None
         self.device_description = ''
         self.start = None     # frame the fish was boxed on (1-based)
+        self.direction = 1    # +1 tracks forwards through the video, -1 backwards
         self.next = None      # next frame step() will track
         self.box = None       # latest box, in video pixels; the window follows it
         self.candidates = {}  # frame -> existing boxes of the track's class, as (box, kind) with
@@ -90,10 +96,13 @@ class VideoTracker:
         self._side = None          # window side for the current memory
         self._capture = None
         self._position = None      # frame number the capture returns next
+        self._frames = {}          # recently decoded frames, for tracking backwards
 
-    def reset(self, frame_number, box):
-        """Start following the fish in ``box`` on ``frame_number``; tracking begins on the next frame."""
-        self.start, self.next = frame_number, frame_number + 1
+    def reset(self, frame_number, box, direction=1):
+        """Start following the fish in ``box`` on ``frame_number``; tracking begins on the next
+        frame in ``direction`` (+1 forwards, -1 backwards)."""
+        self.direction = direction
+        self.start, self.next = frame_number, frame_number + direction
         self.box = [float(v) for v in box]
         self._prompt_frame, self._side = None, None
 
@@ -112,15 +121,21 @@ class VideoTracker:
         if match is not None:
             kind = next(k for box, k in existing if [float(v) for v in box] == match)
             self.box, self._prompt_frame = match, None  # SAM restarts from here if it is needed later
-            self.next = number + 1
+            self.next = number + self.direction
             return number, list(match), 10.0, kind
         if self._prompt_frame is None:
             # Start SAM from the last good box (the boxed frame, an existing box, or a regrown window).
-            self._prompt_frame, self._side = number - 1, None
-            self._sam(number - 1)
+            self._prompt_frame, self._side = number - self.direction, None
+            self._sam(number - self.direction)
         box, score = self._sam(number)
-        self.next = number + 1
+        self.next = number + self.direction
         return number, box, score, 'sam'
+
+    def in_range(self, until):
+        """The next frame is within the video and not past ``until`` in the tracking direction."""
+        if self.direction > 0:
+            return self.next <= min(until, self.total_frames)
+        return self.next >= max(until, 1)
 
     def _sam(self, number):
         """Run SAM on one frame, prompting with self.box on the frame its memory starts from."""
@@ -136,11 +151,13 @@ class VideoTracker:
         side = self._side
         x0, y0 = window_origin(self.box, side, width, height)
         window = np.ascontiguousarray(frame[y0:y0 + side, x0:x0 + side])
-        predictor, index = self.predictor, number - self._prompt_frame
+        # SAM numbers frames 0, 1, 2... from the prompt in the order it sees them, which is
+        # backwards through the video when tracking backwards.
+        predictor, index = self.predictor, abs(number - self._prompt_frame)
         with torch.inference_mode():
             prompt = None
             if index == 0:
-                predictor.inference_state = predictor._init_state(self.total_frames - number + 1)
+                predictor.inference_state = predictor._init_state(self.total_frames)
                 prompt = [[self.box[0] - x0, self.box[1] - y0, self.box[2] - x0, self.box[3] - y0]]
             predictor.dataset.frame = index
             predictor.batch = ([''], [window], [''])
@@ -182,8 +199,23 @@ class VideoTracker:
         self.predictor = predictor
 
     def _read(self, number):
+        if number in self._frames:
+            return self._frames[number]
         if self._capture is None:
             self._capture = cv2.VideoCapture(str(self.video_path))
+        if self.direction < 0:
+            # Backwards: decode a run of earlier frames in one pass (one seek, not one per frame).
+            first = max(1, number - BACKFILL + 1)
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, first - 1)
+            self._frames = {}
+            for n in range(first, number + 1):
+                ok, frame = self._capture.read()
+                if not ok:
+                    break
+                self._frames[n] = frame
+            self._position = None
+            return self._frames.get(number)
+        self._frames = {}
         if self._position != number:
             self._capture.set(cv2.CAP_PROP_POS_FRAMES, number - 1)
         ok, frame = self._capture.read()
@@ -194,24 +226,37 @@ class VideoTracker:
         if self._capture is not None:
             self._capture.release()
         self._capture = self._position = None
+        self._frames = {}
 
 
 class SAMVideoWorker(QThread):
-    """Track frames until ``until`` (which may be raised while running) or the fish is lost."""
+    """Track frames in the tracker's direction until ``until`` or until the fish has gone.
+
+    A fish counts as gone only after SAM misses it on ``grace`` frames in a row, so a fish
+    that hides behind coral for a moment is followed out the other side.
+    """
     tracked = pyqtSignal(int, object, float, str)  # frame number, box or None, score, 'manual', 'ai' or 'sam'
+    lost = pyqtSignal(int)                         # first frame of the misses that ended tracking
     failed = pyqtSignal(str)
 
-    def __init__(self, tracker, until, parent=None):
+    def __init__(self, tracker, until, grace=1, parent=None):
         super().__init__(parent)
-        self.tracker, self.until = tracker, until
+        self.tracker, self.until, self.grace = tracker, until, max(1, grace)
 
     def run(self):
         tracker = self.tracker
+        misses, first_miss = 0, None
         try:
-            while (not self.isInterruptionRequested() and tracker.next <= min(self.until, tracker.total_frames)):
+            while not self.isInterruptionRequested() and tracker.in_range(self.until):
                 number, box, score, source = tracker.step()
-                self.tracked.emit(number, box, score, source)
                 if box is None:
-                    break  # the fish has gone; stop until someone boxes it again
+                    misses += 1
+                    first_miss = number if first_miss is None else first_miss
+                else:
+                    misses, first_miss = 0, None
+                self.tracked.emit(number, box, score, source)
+                if misses >= self.grace:
+                    self.lost.emit(first_miss)  # the fish has gone; stop until someone boxes it again
+                    break
         except Exception as exc:
             self.failed.emit(str(exc))

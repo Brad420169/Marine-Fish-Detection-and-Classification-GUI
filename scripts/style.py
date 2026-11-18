@@ -25,6 +25,7 @@ QPushButton:pressed { background: #006794; }
 QPushButton:disabled { background: #0a283b; color: #64859b; border-color: #24485d; }
 QPushButton#primaryButton, QPushButton#runButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #00a9f2,stop:1 #0065c5); border: 1px solid #19c0ff; font-weight: 700; color: white; }
 QPushButton#primaryButton:hover, QPushButton#runButton:hover { background: #008dea; }
+QPushButton#primaryButton:disabled { background: #0b3048; border-color: #24597a; color: #6f93a8; }
 QPushButton#runButton, QPushButton#cancelButton { min-height: 42px; font-size: 15px; font-weight: 700; }
 QPushButton#runButton:disabled { background: #12405a; color: #709caf; border-color: #306078; }
 QPushButton#confirmButton { background: #00bce5; color: #002037; border-color: #5ceaff; font-weight: 700; }

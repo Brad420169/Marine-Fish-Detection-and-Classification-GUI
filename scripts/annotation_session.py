@@ -4,11 +4,11 @@ import math
 import os
 from pathlib import Path
 import shutil
-from uuid import uuid4
 
 import cv2
 
 from review_io import REVIEW_COLUMNS
+from yolo_export import folder_name, unique_path
 from review_store import ReviewStore
 
 
@@ -77,7 +77,9 @@ def create_session(project, video, interval=1, target_fps=None, cancelled=lambda
             raise ValueError('The video could not be read or has invalid timing information.')
     finally:
         cap.release()
-    root = Path(project.output_root) / project.name / 'annotations' / uuid4().hex
+    # Named after the video (fish_test, fish_test_2...), so sessions are easy to tell apart on disk.
+    name = folder_name(video.stem) + (f'_{target_fps:g}fps' if target_fps else '')
+    root = unique_path(Path(project.output_root) / project.name / 'annotations' / name)
     root.mkdir(parents=True)
     try:
         if target_fps is not None:

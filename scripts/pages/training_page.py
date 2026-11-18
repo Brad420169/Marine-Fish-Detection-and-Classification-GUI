@@ -14,6 +14,8 @@ from paths import ROOT_DIR
 from widgets import settings_slider
 from dataset_validation import inspect_dataset, label_path
 from training_metrics import parse_metrics
+from pages.combine_panel import CombineDatasetsPanel
+from yolo_export import dataset_label
 from pages.training_dashboard import TrainingDashboard
 
 
@@ -83,6 +85,8 @@ class TrainingPage(QWidget):
         title = QLabel('Train a Model'); title.setObjectName('pageTitle'); layout.addWidget(title)
         intro = QLabel('Use a project dataset or open an existing YOLO dataset. No detection run is required.')
         intro.setWordWrap(True); intro.setObjectName('muted'); layout.addWidget(intro)
+        self.combine_panel = CombineDatasetsPanel()  # merge datasets from several videos before training
+        layout.addWidget(self.combine_panel)
 
         train_group = QGroupBox('Training dataset and settings')
         train_layout = QVBoxLayout(train_group)
@@ -203,12 +207,15 @@ class TrainingPage(QWidget):
         self.project_datasets.addItem('Choose a project dataset…', '')
         for item in self.project.items:
             if item['kind'] == 'dataset':
-                self.project_datasets.addItem(item['name'], item['path'])
+                self.project_datasets.addItem(dataset_label(item['path']), item['path'])
+        self.combine_panel.set_datasets([(item['name'], item['path']) for item in self.project.items
+                                         if item['kind'] == 'dataset'])
         index = self.project_datasets.findData(current)
         self.project_datasets.setCurrentIndex(max(0, index))
 
     def set_run(self, root):
-        yaml = Path(root) / 'yolo_dataset' / 'data.yaml' if root else None
+        found = sorted(Path(root).glob('*yolo_dataset*/data.yaml')) if root else []
+        yaml = found[-1] if found else None
         if yaml and yaml.is_file():
             self.dataset.setText(str(yaml))
 

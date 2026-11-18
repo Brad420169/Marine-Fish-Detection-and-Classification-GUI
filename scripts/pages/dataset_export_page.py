@@ -2,8 +2,8 @@
 from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox)
-from yolo_export import ExportWorker, reviewed_frames
+    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QProgressBar)
+from yolo_export import ExportWorker, default_dataset_path, reviewed_frames, unique_path
 from widgets import settings_slider
 
 class DatasetExportPage(QWidget):
@@ -15,6 +15,7 @@ class DatasetExportPage(QWidget):
         super().__init__(parent)
         self.root = None
         self.export_worker = None
+        self.last_dataset = None
         layout = QVBoxLayout(self)
         export_group = QGroupBox('Generate AI training data')
         export_layout = QVBoxLayout(export_group)
@@ -35,12 +36,18 @@ class DatasetExportPage(QWidget):
         destination_row.addWidget(self.destination, 1)
         browse = QPushButton('Choose parent folder'); browse.clicked.connect(self._choose_destination)
         destination_row.addWidget(browse); export_layout.addLayout(destination_row)
+        export_buttons = QHBoxLayout()
         self.export_button = QPushButton('Generate AI Training Data')
         self.export_button.setObjectName('primaryButton')
-        self.export_button.clicked.connect(self._export); export_layout.addWidget(self.export_button)
+        self.export_button.clicked.connect(self._export); export_buttons.addWidget(self.export_button, 1)
+        self.export_stop = QPushButton('Stop'); self.export_stop.setEnabled(False)
+        self.export_stop.clicked.connect(lambda: self.export_worker and self.export_worker.requestInterruption())
+        export_buttons.addWidget(self.export_stop)
+        export_layout.addLayout(export_buttons)
+        self.export_progress = QProgressBar(); self.export_progress.setFormat('%v of %m frames (%p%)')
+        self.export_progress.hide(); export_layout.addWidget(self.export_progress)
         self.export_status = QLabel(); self.export_status.setWordWrap(True); export_layout.addWidget(self.export_status)
         layout.addWidget(export_group)
-
 
         self.use_button = QPushButton('Use in Train a Model')
         self.use_button.setEnabled(False)
@@ -55,7 +62,7 @@ class DatasetExportPage(QWidget):
         if self.export_worker:
             return
         self.root = Path(root)
-        self.destination.setText(str(self.root / 'yolo_dataset'))
+        self.destination.setText(str(default_dataset_path(self.root)))
         self.use_button.setEnabled(False)
         self.export_status.clear()
         try:
@@ -71,7 +78,8 @@ class DatasetExportPage(QWidget):
 
     def _choose_destination(self):
         parent = QFileDialog.getExistingDirectory(self, 'Choose parent folder for the new dataset')
-        if parent: self.destination.setText(str(Path(parent) / 'fish_yolo_dataset'))
+        if parent: self.destination.setText(str(unique_path(Path(parent) / default_dataset_path(self.root).name)
+                                                if self.root else Path(parent) / 'yolo_dataset'))
 
     def _export(self):
         if not self.root:
@@ -86,10 +94,19 @@ class DatasetExportPage(QWidget):
         self.export_status.setText('Exporting reviewed frames…')
         self.export_worker = ExportWorker(self.root, destination,
                                           self.train_split.value(), self.val_split.value(), self)
+        self.export_worker.progress.connect(self._export_progressed)
         self.export_worker.succeeded.connect(self._exported)
         self.export_worker.failed.connect(lambda error: self.export_status.setText(f'Export failed: {error}'))
         self.export_worker.finished.connect(self._export_finished)
+        self.export_progress.setRange(0, 0)  # busy until the first frame is written
+        self.export_progress.show()
+        self.export_stop.setEnabled(True)
         self.export_worker.start()
+
+    def _export_progressed(self, done, total):
+        self.export_progress.setRange(0, total)
+        self.export_progress.setValue(done)
+        self.export_status.setText(f'Exporting frame {done} of {total}…')
 
     def _exported(self, path, counts):
         yaml = Path(path)
@@ -102,4 +119,6 @@ class DatasetExportPage(QWidget):
         self.export_worker.deleteLater()
         self.export_worker = None
         self.export_button.setEnabled(True)
+        self.export_stop.setEnabled(False)
+        self.export_progress.hide()
 

@@ -34,6 +34,7 @@ from pages.project_page import ProjectsPage
 from pages.project_overview import ProjectOverview
 from pages.annotation_library import AnnotationLibrary
 from pages.dataset_export_page import DatasetExportPage
+from yolo_export import dataset_label
 
 
 class MainWindow(QMainWindow):
@@ -273,6 +274,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.review_page)
         self.training_page = TrainingPage()
         self.training_page.model_ready.connect(self._use_model)
+        self.training_page.combine_panel.combined.connect(self._use_dataset)  # registered and loaded for training
         self.pages.addWidget(self.training_page)
         self.shell = OceanShell(self.pages, project, self._navigate_shell)
         self.setCentralWidget(self.shell)
@@ -282,8 +284,9 @@ class MainWindow(QMainWindow):
         self._sync_sidebar()
 
     def closeEvent(self, event):
-        if self.export_page.export_worker and self.export_page.export_worker.isRunning():
-            QMessageBox.information(self, 'Export in progress', 'Wait for the dataset export to finish before closing.')
+        if any(worker and worker.isRunning() for worker in (self.export_page.export_worker,
+                                                            self.training_page.combine_panel.worker)):
+            QMessageBox.information(self, 'Export in progress', 'Wait for the dataset export or combining to finish before closing.')
             event.ignore()
             return
         if self.training_page.process.state() != QProcess.ProcessState.NotRunning:
@@ -399,7 +402,7 @@ class MainWindow(QMainWindow):
 
     def _register_dataset(self, filename):
         try:
-            self.project.add_item('dataset', Path(filename).parent.name, filename)
+            self.project.add_item('dataset', dataset_label(filename), filename)
             self.training_page.refresh_datasets()
         except OSError as exc:
             QMessageBox.warning(self, 'Dataset saved', f'Dataset is saved at {filename}, but project registration failed: {exc}')
@@ -409,7 +412,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, 'Training active', 'Finish or stop the current training job before changing its dataset.')
             return
         try:
-            self.project.add_item('dataset', Path(filename).parent.name, filename)
+            self.project.add_item('dataset', dataset_label(filename), filename)
         except OSError as exc:
             QMessageBox.warning(self, 'Cannot register dataset', str(exc)); return
         self.training_page.refresh_datasets()
@@ -502,6 +505,7 @@ class MainWindow(QMainWindow):
 
     def _work_in_progress(self):
         return bool((self.worker and self.worker.isRunning()) or self.export_page.export_worker
+                    or self.training_page.combine_panel.worker
                     or self.review_page.worker or self.review_page.sam.worker
                     or self.training_page.process.state() != QProcess.ProcessState.NotRunning)
 

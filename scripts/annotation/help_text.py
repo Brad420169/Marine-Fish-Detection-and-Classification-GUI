@@ -38,14 +38,12 @@ TIPS = (
         ('Clear an area', '<b>Right-drag</b> removes AI boxes in that area from this frame onward.'),
     )),
     ('Track with SAM', (
-        ('1', '<b>Click any box</b> (AI, SAM or yours) and tick <b>Track?</b>. Choose how many seconds.'),
-        ('2', '<b>Wait for the bar.</b> Boxes of the same class already there are reused, so SAM only fills '
-              'the gaps. <b>Stop</b> keeps what is done.'),
-        ('3', '<b>The boxes are saved</b>; nothing needs ticking. Browse the frames and move or resize any '
-              'box that is off; only that box changes.'),
-        ('4', '<b>Track further</b>: click its last box and tick <b>Track?</b> again.'),
-        ('Several', '<b>Track multiple fish</b>, click each fish, then <b>Enter</b>: one question, all tracked.'),
-        ('Tip', 'Name the track like the detector\'s class (e.g. <i>fish</i>) so its AI boxes are reused.'),
+        ('1', '<b>Click a box</b>, tick <b>Track?</b>, then <b>Track</b>.'),
+        ('2', 'SAM goes <b>back</b> to where the fish appears, then <b>forward</b> until it leaves.'),
+        ('3', '<b>Boxes are saved.</b> Move or resize any that are off.'),
+        ('4', '<b>Check the frames</b> the status line lists.'),
+        ('Several', '<b>Track multiple fish</b>, click each fish, <b>Enter</b>.'),
+        ('Tip', 'Name tracks like the detector\'s class (e.g. <i>fish</i>).'),
     )),
     ('Navigate', (
         ('Check', '<b>Tick</b> or <b>cross</b> each AI box in the table; it saves at once.'),
