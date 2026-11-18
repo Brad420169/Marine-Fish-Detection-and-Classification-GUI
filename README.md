@@ -316,7 +316,7 @@ Hold the **right mouse button and drag** a rectangle over an unwanted annotation
 
 ### Return to refreshed results
 
-Click **Back to Results** or navigate away using the sidebar to save your labelled annotations and edits automatically, even when only part of the video has been reviewed. Leaving does not advance tracks. Boxes without a species must be labelled or removed before leaving. For detection runs, the app refreshes saved results before opening the destination page, so charts and summaries include your changes. Manual sessions save and return to Overview without generating detection results. There is no separate **Refresh Results** button.
+Click **Back to Results** or navigate away using the sidebar to save your labelled annotations and edits automatically, even when only part of the video has been reviewed. Leaving does not advance tracks. Boxes without a species must be labelled or removed before leaving. For detection runs, the app refreshes saved results before opening the destination page, so charts and summaries include your changes. Manual sessions save and return to Overview. To get results from a manual session, press **Generate Results** (next to **Back to Overview**): it saves your current frame, works out Max-N, first/last seen, visible time and box counts per species from your annotations, writes `track_summary.csv`, `reviewed_detections.csv` and Max-N example frames into the session folder, and opens them on the Results page. Fish you tracked count as tracks in `unique_tracks`. It asks **Also make an annotated video?** each time: **Yes** also draws your boxes and species labels on a copy of the video (`<video name>_annotated.mp4` in the session folder), so **Open Annotated Video** works in Results; this re-encodes every frame, so it takes a while on long or 4K videos. **No** writes just the CSVs and Max-N frames. There is no separate **Refresh Results** button.
 
 The refresh rebuilds `track_summary.csv`, charts, and available Max-N examples from the original predictions plus saved decisions. It also writes `reviewed_detections.csv` and preserves the initial summary as `track_summary_original.csv`. Unreviewed predictions retain their original labels. Refreshing does not rerun tracking, and repeated refreshes start from `original_detections.json` rather than accumulating changes.
 
@@ -393,6 +393,18 @@ Marine-Fish-Detection-and-Classification-GUI/
 ├── assets/             Application icons and graphics
 ├── models/             Marine fish detection model weights
 ├── scripts/            Application source code
+│   ├── app.py          Entry point (pixi run GUI)
+│   ├── core/           Paths, image reading/writing, choosing CPU or GPU
+│   ├── detection/      Running a detector over a video (pipeline, detector adapters)
+│   ├── review/         The review database, results summary, tracks and charts
+│   ├── sam/            SAM image clicks (assist.py) and SAM video tracking (video.py)
+│   ├── datasets/       YOLO export, combining datasets, dataset checks
+│   ├── training/       YOLO training (run as a separate process) and its metrics
+│   ├── projects/       Projects and annotation sessions
+│   ├── ui/             Shared style, widgets, icons and the error dialog
+│   ├── pages/          One file per screen (projects, detection, results, training...)
+│   ├── annotation/     The Annotate Data page and its parts
+│   └── checks/         Developer checks: pixi run python scripts/checks/check_*.py
 │
 ├── launch_gui.bat      Windows launcher
 ├── pixi.toml           Environment configuration
@@ -425,7 +437,7 @@ A ZIP containing `.cfg` and `.weights` is not a PyTorch checkpoint, even if name
 
 ## Adding a New AI Object/Fish Detector Model
 
-Detection logic is isolated in `scripts/detectors.py` behind a single adapter interface, so `pipeline.py` and the GUI can remain agnostic to the model architecture. 
+Detection logic is isolated in `scripts/detection/detectors.py` behind a single adapter interface, so `detection/pipeline.py` and the GUI can remain agnostic to the model architecture. 
 Adding a new model type (e.g. a different YOLO variant, DETR variant, or something else entirely) means implementing an additional Python class to support the new model type — nothing else in the codebase needs to change.
 
 ### How the adapter layer works
@@ -456,7 +468,7 @@ As long as your class returns a correctly shaped `DetectionFrame`, everything do
 
 ### Steps to add a new model
 
-1. **Write a new class in `detectors.py`** that subclasses `BaseDetector`:
+1. **Write a new class in `detection/detectors.py`** that subclasses `BaseDetector`:
 
 ```python
    class MyModelDetector(BaseDetector):
@@ -483,7 +495,7 @@ As long as your class returns a correctly shaped `DetectionFrame`, everything do
 
    Look at `YOLODetector` and `RFDETRDetector` in the same file as worked examples. Note how `RFDETRDetector` handles a model with no built-in tracker by attaching `supervision.ByteTrack()` manually. If your model doesn't track objects across frames either, do the same.
 
-2. **Register the weights file extension** in the `load_detector()` factory at the bottom of `detectors.py`:
+2. **Register the weights file extension** in the `load_detector()` factory at the bottom of `detection/detectors.py`:
 
 ```python
    def load_detector(weights_path: Path, device: str | None) -> BaseDetector:
@@ -497,7 +509,7 @@ As long as your class returns a correctly shaped `DetectionFrame`, everything do
        raise ValueError(...)
 ```
 
-   The GUI's model dropdown (`WeightsRow` in `widgets.py`) currently only globs for `*.pt` and `*.pth` files in `models/` — if your weights use a different extension, add it to the glob there too:
+   The GUI's model dropdown (`WeightsRow` in `ui/widgets.py`) currently only globs for `*.pt` and `*.pth` files in `models/` — if your weights use a different extension, add it to the glob there too:
 
 ```python
    models = sorted(

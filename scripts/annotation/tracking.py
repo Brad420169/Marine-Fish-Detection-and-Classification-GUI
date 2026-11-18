@@ -1,6 +1,6 @@
 """Following one fish across frames on the annotation page.
 
-The track bookkeeping (lookahead, gap filling, ending a track) is in review_tracks.py;
+The track bookkeeping (lookahead, gap filling, ending a track) is in review/tracks.py;
 this class owns the page-side state: which fish is being followed, the Track? prompt
 and Confirm track, Next (tracking), Finish fish, and SAM adjustment of suggested boxes. When the SAM model
 is installed, SAM's video tracker supplies the boxes instead (video_follow.py).
@@ -8,10 +8,10 @@ is installed, SAM's video tracker supplies the boxes instead (video_follow.py).
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMessageBox
 
-from ui_icons import icon
+from ui.icons import icon
 
-from review_io import box_identity, original_box, review_box
-from review_tracks import COPIED, INTERPOLATED, advance_tracks, create_track, end_track
+from review.io import box_identity, original_box, review_box
+from review.tracks import COPIED, INTERPOLATED, advance_tracks, create_track, end_track
 
 from annotation.video_follow import VideoFollow
 

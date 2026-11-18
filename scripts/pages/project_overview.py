@@ -3,7 +3,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QBoxLayout, QFrame,
                              QLabel, QPushButton, QScrollArea)
 
-from ui_icons import icon, icon_label
+from ui.icons import icon, icon_label
 
 
 class ProjectOverview(QWidget):
@@ -104,7 +104,7 @@ class ProjectOverview(QWidget):
                                  item['kind'], (item['kind'], 'document'))
             if item['kind'] == 'annotation':
                 try:
-                    from yolo_export import reviewed_frames
+                    from datasets.export import reviewed_frames
                     _, _, numbers = reviewed_frames(item['path'])
                     status += f" · {len(numbers)} frames with checked boxes"
                 except (OSError, ValueError, KeyError):

@@ -9,7 +9,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QScrollArea, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QSizePolicy, QTableWidget, QTabWidget, QVBoxLayout, QWidget)
 
-from ui_icons import icon
+from ui.icons import icon
 
 from annotation import help_text
 from annotation.canvas import ImageLabel
@@ -261,6 +261,12 @@ def _tips_panel():
 def _navigation(page):
     nav = QHBoxLayout()
     page.back = button(nav, 'Back to Results', page.leave)
+    # Manual annotation sessions only: their boxes are results too (Max-N, CSVs for R).
+    page.results_button = button(nav, 'Generate Results', page.generate_results)
+    page.results_button.setIcon(icon('chart'))
+    page.results_button.setToolTip('Save, then work out Max-N, timings and counts from your boxes and open them '
+                                   'in Results (track_summary.csv, reviewed_detections.csv, Max-N frames).')
+    page.results_button.hide()
     page.previous = button(nav, 'Previous', lambda: page.nav.go(-1))
     page.previous.setToolTip('Save your edits on this frame and go back one frame (Left arrow).')
     page.finish_fish = button(nav, 'Finish fish', page.tracking.finish)

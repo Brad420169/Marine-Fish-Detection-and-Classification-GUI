@@ -5,9 +5,9 @@ Coordinates arrive as fractions of the frame (0–1) from the canvas.
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QMessageBox
 
-from review_io import original_box, review_box
-from review_rejections import exclude_detection_area
-from review_tracks import stop_track
+from review.io import original_box, review_box
+from review.rejections import exclude_detection_area
+from review.tracks import stop_track
 
 from annotation.saving import model_row
 from annotation.undo import row_changes

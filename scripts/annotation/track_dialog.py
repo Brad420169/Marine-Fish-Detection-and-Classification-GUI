@@ -2,7 +2,7 @@
 
 It shows how much video there is before and after the frame, which device SAM runs on
 (CPU or GPU) and how fast, and a worst-case time that updates as you type. Icons come
-from assets/*.svg (via ui_icons), so the dialog looks the same on Windows, macOS and
+from assets/*.svg (via ui.icons), so the dialog looks the same on Windows, macOS and
 Linux. The measured speed is remembered between sessions with QSettings (the registry
 on Windows, a preferences file on macOS, a config file on Linux).
 """
@@ -15,8 +15,8 @@ from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout, QLabel,
                              QVBoxLayout)
 
-from ui_icons import icon_label
-from paths import ROOT_DIR
+from ui.icons import icon_label
+from core.paths import ROOT_DIR
 
 TYPICAL_SECONDS = {'CPU': 1.0, 'GPU': 0.15}  # per frame, until this computer has been measured
 _device = None
@@ -43,7 +43,7 @@ def sam_device():
     global _device
     if _device is None:
         try:
-            from inference_device import select_device
+            from core.inference_device import select_device
             device, description = select_device()
         except Exception:
             device, description = 'cpu', ''

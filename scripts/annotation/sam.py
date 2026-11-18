@@ -1,13 +1,13 @@
 """SAM-assisted annotation on the annotation page: preview, click queue and preloading.
 
-The model itself lives in sam_assist.py; this class owns the page-side state.
+The model itself lives in sam/assist.py; this class owns the page-side state.
 Only one background job (a mask, or a batch of track adjustments) runs at a time,
 held in ``worker``.
 """
 from PyQt6.QtCore import QThread, QTimer, Qt
 from PyQt6.QtWidgets import QCompleter
 
-from sam_assist import CHECKPOINT, SAMPreloadWorker, SAMSession, SAMTrackWorker, SAMWorker, mask_box
+from sam.assist import CHECKPOINT, SAMPreloadWorker, SAMSession, SAMTrackWorker, SAMWorker, mask_box
 
 
 class SamAssist:

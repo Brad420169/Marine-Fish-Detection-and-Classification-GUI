@@ -9,17 +9,17 @@ from pathlib import Path
 
 import cv2
 
-from image_io import imread, imwrite
-from pipeline import format_timestamp
-from review_io import context_for, load_species_names
-from review_store import ReviewStore
+from core.image_io import imread, imwrite
+from detection.pipeline import format_timestamp
+from review.io import context_for, load_species_names
+from review.store import ReviewStore
 
 
 class ReviewSession:
     """One opened detection run or manual annotation session."""
 
     def __init__(self):
-        self.store = None         # the run's review database (review_store.py)
+        self.store = None         # the run's review database (review/store.py)
         self.root = None          # run / session folder
         self.video = None         # annotated output video, if any
         self.source_video = None  # raw video to read frames from

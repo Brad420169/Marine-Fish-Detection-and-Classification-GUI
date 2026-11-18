@@ -7,7 +7,7 @@ page once a run completes.
 """
 from __future__ import annotations
 
-from ui_icons import icon
+from ui.icons import icon
 
 from pathlib import Path
 
@@ -19,22 +19,22 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QVBoxLayout, QWidget
 )
 
-from ocean_ui import OceanShell
-from paths import ICON_PATH
-from widgets import VideoPathRow, WeightsRow, LabeledNumber
-from charts import _read_summary_csv
-from review_summary import results_need_refresh
-from pipeline import RunConfig
-from worker import PipelineWorker
-from project_manager import Project, RunRecord
+from ui.ocean_ui import OceanShell
+from core.paths import ICON_PATH
+from ui.widgets import VideoPathRow, WeightsRow, LabeledNumber
+from review.charts import _read_summary_csv
+from review.summary import results_need_refresh
+from detection.pipeline import RunConfig
+from detection.worker import PipelineWorker
+from projects.project_manager import Project, RunRecord
 from pages.results_page import ResultsPage
-from pages.review_page import ReviewPage
+from annotation.page import ReviewPage
 from pages.training_page import TrainingPage
 from pages.project_page import ProjectsPage
 from pages.project_overview import ProjectOverview
 from pages.annotation_library import AnnotationLibrary
 from pages.dataset_export_page import DatasetExportPage
-from yolo_export import dataset_label
+from datasets.export import dataset_label
 
 
 class MainWindow(QMainWindow):
@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
 
         self.review_page = ReviewPage(on_back=self._annotation_back)
         self.review_page.export_requested.connect(self._export_annotations)
+        self.review_page.results_requested.connect(self._show_session_results)
         self.review_page.results_refreshed.connect(self._reload_reviewed_results)
         self.pages.addWidget(self.review_page)
         self.training_page = TrainingPage()
@@ -584,8 +585,23 @@ class MainWindow(QMainWindow):
             self.training_page.set_run(output_dir)
         self.pages.setCurrentWidget(self.training_page)
 
+    def _show_session_results(self) -> None:
+        """Generate Results finished for a manual annotation session: show its results."""
+        root = Path(self.review_page.session.root)
+        outputs = {"summary_csv": root / "track_summary.csv"}
+        video = self.review_page.session_video_path()
+        if video.is_file():  # made if you chose Yes to "Also make an annotated video?"
+            outputs["video"] = video
+        for index, path in enumerate(sorted((root / "maxn_examples").glob("*.jpg"))[:2], 1):
+            outputs[f"maxn_frame_{index}"] = path
+        self.results_page.set_results(outputs, self.project.name, "Manual annotation", root)
+        self.pages.setCurrentWidget(self.results_page)
+        self._sync_sidebar()
+
     def _reload_reviewed_results(self) -> None:
         page = self.results_page
+        if not page.output_dir or Path(page.output_dir) != Path(self.review_page.session.root or ''):
+            return  # Results shows another run (or none): Generate Results loads its own
         outputs = {key: value for key, value in page.outputs.items() if not key.startswith("maxn_frame_")}
         for index, path in enumerate(sorted((page.output_dir / "maxn_examples").glob("*.jpg"))[:2], 1):
             outputs[f"maxn_frame_{index}"] = path

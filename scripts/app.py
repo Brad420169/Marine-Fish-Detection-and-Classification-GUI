@@ -17,9 +17,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication
 
-import error_report
-from paths import ICON_PATH
-from style import APP_STYLE
+import ui.error_report as error_report
+from core.paths import ICON_PATH
+from ui.style import APP_STYLE
 from pages.main_window import MainWindow
 
 if sys.platform == "win32":

@@ -109,7 +109,7 @@ try {
         $Step = 'Installing SAM 2.1 Tiny model for SAM-assisted annotation'
         $SamModel = Join-Path $ProjectDir 'models\sam\sam2.1_t.pt'
         Write-Host "$Step (75 MiB) into $SamModel..."
-        # scripts/sam_assist.py downloads to models\sam\ in this checkout and skips an existing file.
+        # scripts/sam/assist.py downloads to models\sam\ in this checkout and skips an existing file.
         & pixi run --locked setup-sam
         if ($LASTEXITCODE -ne 0) { throw "SAM model download failed. Run 'pixi run setup-sam' from $ProjectDir to retry." }
         if (-not (Test-Path -LiteralPath $SamModel)) { throw "SAM model not found at $SamModel." }

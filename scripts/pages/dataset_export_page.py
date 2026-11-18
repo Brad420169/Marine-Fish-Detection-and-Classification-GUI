@@ -3,8 +3,8 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QProgressBar)
-from yolo_export import ExportWorker, default_dataset_path, reviewed_frames, unique_path
-from widgets import settings_slider
+from datasets.export import ExportWorker, default_dataset_path, reviewed_frames, unique_path
+from ui.widgets import settings_slider
 
 class DatasetExportPage(QWidget):
     exported = pyqtSignal(str)

@@ -1,5 +1,5 @@
 """User-facing instructions shown on the annotation page."""
-from review_io import AI_COLOUR, MANUAL_COLOUR, SELECTED_COLOUR
+from review.io import AI_COLOUR, MANUAL_COLOUR, SELECTED_COLOUR
 
 ACCENT = '#45d8f6'
 

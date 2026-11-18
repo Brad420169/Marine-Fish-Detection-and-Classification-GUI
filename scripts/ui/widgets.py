@@ -1,0 +1,512 @@
+"""
+ui/widgets.py
+-------------
+Reusable UI widgets shared across pages: path pickers, the video
+drag-and-drop row, the model weights selector, the labeled slider
+used for detection settings, and the project list row.
+"""
+from __future__ import annotations
+
+from ui.icons import icon, icon_text
+
+import shutil
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
+)
+
+from core.paths import ROOT_DIR
+
+
+class PathRow(QWidget):
+    """Generic path selection row with inline Browse button."""
+
+    def __init__(
+        self,
+        label: str,
+        placeholder: str,
+        mode: str = "file",  # 'file' or 'folder'
+        file_filter: str = "",
+        parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.mode = mode
+        self.file_filter = file_filter
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        lbl = QLabel(label)
+        lbl.setFixedWidth(100)
+        layout.addWidget(lbl)
+
+        self.field = QLineEdit()
+        self.field.setPlaceholderText(placeholder)
+        self.field.setReadOnly(True)
+        layout.addWidget(self.field, 1)
+
+        self.btn = QPushButton("Browse…")
+        self.btn.setFixedWidth(95)
+        self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn.clicked.connect(self._browse)
+        layout.addWidget(self.btn)
+
+    def set_path(self, path: str) -> None:
+        self.field.setText(path)
+
+    def get_path(self) -> str:
+        return self.field.text().strip()
+
+    def _browse(self) -> None:
+        if self.mode == "folder":
+            path = QFileDialog.getExistingDirectory(self, "Select Folder")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Select File", "", self.file_filter)
+
+        if path:
+            self.set_path(path)
+
+
+class VideoPathRow(PathRow):
+    """PathRow specialized for video files with Drag & Drop support."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(
+            label="Video",
+            placeholder="Select a .mp4 video file…",
+            mode="file",
+            file_filter="Video Files (*.mp4 *.avi *.mov *.mkv)",
+            parent=parent,
+        )
+        self.setAcceptDrops(True)
+
+        # Restructure layout to accommodate drag-and-drop box below input row
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(8)
+
+        # Reparent original row layout into a sub-widget
+        row_widget = QWidget()
+        row_widget.setLayout(self.layout())
+        main_layout.addWidget(row_widget)
+
+        # Drag and drop area
+        self.drop_label = QLabel()
+        self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_label.setFixedHeight(75)
+        self.drop_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._set_idle_style()
+
+        main_layout.addWidget(self.drop_label)
+        self.fps_choice = QComboBox()
+        self.fps_choice.setAccessibleName('Processing frame rate')
+        self.fps_choice.addItem('Select a video to detect FPS', None)
+        self.fps_choice.setEnabled(False)
+        main_layout.addWidget(self.fps_choice)
+        self.fps_warning = QLabel('Lower FPS removes frames from this run’s working video and output. '
+            'To return to the original FPS, start a new run or session by dropping or browsing the original video again. '
+            'Your original file is unchanged. Reduced-FPS working videos have no audio.')
+        self.fps_warning.setWordWrap(True)
+        self.fps_warning.setStyleSheet('color: #ffd28a;')
+        self.fps_warning.hide()
+        main_layout.addWidget(self.fps_warning)
+        self.fps_choice.currentIndexChanged.connect(
+            lambda: self.fps_warning.setVisible(self.target_fps() is not None))
+        self.setLayout(main_layout)
+
+    def target_fps(self):
+        return self.fps_choice.currentData()
+
+    def set_path(self, path: str) -> None:
+        super().set_path(path)
+        from detection.video_sampling import video_fps
+        self.fps_choice.clear()
+        try:
+            fps = video_fps(path)
+            self.fps_choice.addItem(f'Original — {fps:g} FPS', None)
+            for rate in (30, 24, 15, 5):
+                if rate < fps:
+                    self.fps_choice.addItem(f'{rate} FPS', rate)
+            self.fps_choice.setEnabled(True)
+        except ValueError as exc:
+            self.fps_choice.addItem(str(exc), None)
+            self.fps_choice.setEnabled(False)
+        self._show_loaded_video()
+
+    def _show_loaded_video(self):
+        self.drop_label.setText(icon_text("check", Path(self.get_path()).name))
+        self.drop_label.setStyleSheet(
+            """
+            QLabel {
+                border: 2px solid #54d6ae;
+                border-radius: 8px;
+                background-color: #123e46;
+                color: #54d6ae;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            """
+        )
+
+    def _set_idle_style(self) -> None:
+        self.drop_label.setStyleSheet(
+            """
+            QLabel {
+                border: 2px dashed #4885a5;
+                border-radius: 8px;
+                background-color: #0b3048;
+                color: #b0d1e6;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QLabel:hover {
+                border: 2px dashed #0072CE;
+                background-color: #134b65;
+                color: #41d4ff;
+            }
+            """
+        )
+        self.drop_label.setText(icon_text("video", "Drop video file here"))
+
+    def _set_hover_style(self) -> None:
+        self.drop_label.setStyleSheet(
+            """
+            QLabel {
+                border: 2px dashed #0072CE;
+                border-radius: 8px;
+                background-color: #164a62;
+                color: #41d4ff;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            """
+        )
+        self.drop_label.setText(icon_text("arrow_down", "Release to load video"))
+
+    @staticmethod
+    def dropped_video(mime):
+        """Accept exactly one existing local video, never a URL or directory."""
+        urls = mime.urls() if mime.hasUrls() else []
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        path = Path(urls[0].toLocalFile())
+        if path.is_file() and path.suffix.lower() in ('.mp4', '.avi', '.mov', '.mkv'):
+            return str(path)
+        return None
+
+    def dragEnterEvent(self, event) -> None:
+        if self.dropped_video(event.mimeData()):
+            self._set_hover_style()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if self.dropped_video(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        if self.get_path(): self._show_loaded_video()
+        else: self._set_idle_style()
+        event.accept()
+
+    def dropEvent(self, event) -> None:
+        path = self.dropped_video(event.mimeData())
+        if path:
+            self.set_path(path)
+            event.acceptProposedAction()
+        else:
+            if self.get_path(): self._show_loaded_video()
+            else: self._set_idle_style()
+            event.ignore()
+
+
+class WeightsRow(QWidget):
+    """Model selector and manager row."""
+
+    DEFAULT_MODEL = "kona_hawaiiXL.pt"
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.models_dir = ROOT_DIR / "models"
+        self.project_models = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Model selector
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+
+        lbl = QLabel("Weights")
+        lbl.setFixedWidth(100)
+        row1.addWidget(lbl)
+
+        self.combo = QComboBox()
+        self.combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.combo.setMinimumContentsLength(20)
+        self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Disable mouse wheel changing options
+        self.combo.wheelEvent = lambda event: event.ignore()
+        row1.addWidget(self.combo, 1)
+
+        self.refresh_btn = QPushButton()
+        self.refresh_btn.setIcon(icon("refresh"))
+        self.refresh_btn.setAccessibleName("Refresh model list")
+        self.refresh_btn.setFixedWidth(36)
+        self.refresh_btn.setToolTip("Refresh model list")
+        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_btn.clicked.connect(self.refresh)
+        row1.addWidget(self.refresh_btn)
+
+        layout.addLayout(row1)
+
+        # Add model button
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        spacer = QWidget()
+        spacer.setFixedWidth(100)
+        row2.addWidget(spacer)
+
+        self.upload_btn = QPushButton("Add model weights…")
+        self.upload_btn.setIcon(icon("plus"))
+        self.upload_btn.setToolTip("Copy .pt, .pth, or Darknet .weights with matching .cfg and optional .names files")
+        self.upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.upload_btn.clicked.connect(self._upload_weights)
+        row2.addWidget(self.upload_btn, 1)
+
+        layout.addLayout(row2)
+        self.refresh()
+
+    def set_project_models(self, items):
+        self.project_models = [Path(item['path']) for item in items if item['kind'] == 'model']
+        self.refresh()
+
+    def refresh(self) -> None:
+        current = self.combo.currentData()
+        self.combo.clear()
+
+        self.models_dir.mkdir(parents=True, exist_ok=True)
+
+        models = sorted(set([*self.models_dir.glob("*.pt"), *self.models_dir.glob("*.pth"), *self.models_dir.glob("*.weights"),
+                             *(path for path in self.project_models if path.is_file())]))
+        if not models:
+            self.combo.addItem("No .pt/.pth/.weights files found in models/")
+            self.combo.setEnabled(False)
+            return
+
+        self.combo.setEnabled(True)
+        for model in models:
+            label = f'{model.parent.parent.name} / {model.name}' if model in self.project_models else model.name
+            self.combo.addItem(label, userData=model)
+
+        selected = next((i for i in range(self.combo.count()) if self.combo.itemData(i) == current), -1)
+        if current and selected >= 0:
+            self.combo.setCurrentIndex(selected)
+        elif self.combo.findText(self.DEFAULT_MODEL) >= 0:
+            self.combo.setCurrentText(self.DEFAULT_MODEL)
+
+    def _upload_weights(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model Weights",
+            str(self.models_dir),
+            "Model Weights (*.pt *.pth *.weights);;YOLO Weights (*.pt);;RF-DETR Weights (*.pth);;Darknet Weights (*.weights)",
+        )
+        if not path:
+            return
+
+        src = Path(path)
+        sources = [src]
+        if src.suffix.lower() == '.weights':
+            config = src.with_suffix('.cfg')
+            if not config.is_file():
+                QMessageBox.warning(self, 'Configuration missing',
+                                    f'Place {config.name} beside the weights file, then try again.')
+                return
+            sources.append(config)
+            names = src.with_suffix('.names')
+            if names.is_file():
+                sources.append(names)
+        copies = [(source, self.models_dir / source.name) for source in sources
+                  if source.resolve() != (self.models_dir / source.name).resolve()]
+        existing = [dest.name for _, dest in copies if dest.exists()]
+        # Do not silently retain labels from a different model with the same name.
+        stale_names = self.models_dir / src.with_suffix('.names').name
+        remove_names = src.suffix.lower() == '.weights' and len(sources) == 2 and bool(copies) and stale_names.exists()
+        if existing or remove_names:
+            details = 'Replace existing model files: ' + ', '.join(existing)
+            if remove_names:
+                details += f'\nRemove old labels: {stale_names.name} (the imported model has none).'
+            answer = QMessageBox.question(self, 'Replace model?', details,
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            for source, dest in copies:
+                shutil.copy2(source, dest)
+            if remove_names:
+                stale_names.unlink()
+        except Exception as e:
+            QMessageBox.critical(self, "Copy failed", str(e))
+            return
+
+        self.refresh()
+        self.combo.setCurrentText(src.name)
+
+    def get_path(self) -> str:
+        path = self.combo.currentData()
+        return str(path) if path else ""
+
+
+class LabeledNumber(QWidget):
+    """A setting as a label and an editable decimal box (0.01-0.99), with a tooltip."""
+
+    def __init__(self, label_text: str, default: float, tooltip: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.label = QLabel(label_text)
+        layout.addWidget(self.label, 1)
+        self.value_box = QDoubleSpinBox()
+        self.value_box.setDecimals(2)
+        self.value_box.setRange(0.01, 0.99)
+        self.value_box.setSingleStep(0.01)
+        self.value_box.setValue(default)
+        self.value_box.setFixedWidth(90)
+        self.value_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.value_box.setAccessibleName(label_text)
+        layout.addWidget(self.value_box)
+        for widget in (self.label, self.value_box):
+            widget.setToolTip(tooltip)
+
+    def value(self) -> float:
+        return self.value_box.value()
+
+
+class CheckableComboBox(QComboBox):
+    """A drop-down whose items have tick boxes; it stays open while you tick several.
+
+    Clicks on the open list are handled here (a click anywhere on an item, box or name,
+    ticks or unticks it) so the list neither closes nor selects; Space does the same for
+    the highlighted item. Esc or a click outside closes it.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, placeholder="Choose…", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PyQt6.QtGui import QStandardItemModel
+        from PyQt6.QtWidgets import QStyledItemDelegate
+        self.placeholder = placeholder
+        self.setModel(QStandardItemModel(self))
+        self.setItemDelegate(QStyledItemDelegate(self))  # the combo's own delegate ignores tick-box styling
+        # Show a box beside every item, like the app's tick boxes.
+        tick = (ROOT_DIR / 'assets' / 'check_blue.svg').as_posix()
+        self.view().setStyleSheet(
+            'QAbstractItemView::indicator { width: 17px; height: 17px; border-radius: 4px; '
+            'border: 1px solid #70a3bf; background: #082b40; }'
+            f'QAbstractItemView::indicator:checked {{ image: url({tick}); }}'
+            'QAbstractItemView::item { padding: 4px; }')
+        self.view().viewport().installEventFilter(self)
+        self.view().installEventFilter(self)
+        self._filling = False
+        self.model().dataChanged.connect(self._ticks_changed)
+        self._update_text()
+
+    def set_items(self, items):
+        """Replace the items with (text, data) pairs, keeping ticks on data still listed."""
+        from PyQt6.QtGui import QStandardItem
+        ticked = set(self.checked_data())
+        # Not blockSignals: the list must hear about the new rows, or the popup opens with no height.
+        self._filling = True
+        self.model().clear()
+        for text, data in items:
+            item = QStandardItem(text)
+            item.setData(data, Qt.ItemDataRole.UserRole)
+            item.setToolTip(str(data))
+            # Not "user checkable": the view would toggle it too, undoing our tick.
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            item.setCheckState(Qt.CheckState.Checked if data in ticked else Qt.CheckState.Unchecked)
+            self.model().appendRow(item)
+        self._filling = False
+        self._update_text()
+        self.changed.emit()
+
+    def _ticks_changed(self, *_):
+        if not self._filling:
+            self._update_text()
+            self.changed.emit()
+
+    def checked_data(self):
+        model = self.model()
+        return [model.item(row).data(Qt.ItemDataRole.UserRole) for row in range(model.rowCount())
+                if model.item(row).checkState() == Qt.CheckState.Checked]
+
+    def showPopup(self):
+        super().showPopup()
+        # The popup is built on first use and puts its own click handling first; re-register
+        # ours so it runs before it and the list stays open while ticking.
+        for widget in (self.view().viewport(), self.view()):
+            widget.removeEventFilter(self)
+            widget.installEventFilter(self)
+
+    def toggle_row(self, row):
+        item = self.model().item(row)
+        if item is not None:
+            item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked
+                               else Qt.CheckState.Checked)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        kind = event.type()
+        if obj is self.view().viewport() and kind in (QEvent.Type.MouseButtonPress,
+                                                     QEvent.Type.MouseButtonRelease,
+                                                     QEvent.Type.MouseButtonDblClick):
+            index = self.view().indexAt(event.position().toPoint())
+            if index.isValid():
+                if kind == QEvent.Type.MouseButtonRelease:
+                    self.toggle_row(index.row())
+                return True  # keep the list open; no selection
+        if obj is self.view() and kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+            self.toggle_row(self.view().currentIndex().row())
+            return True
+        if obj in (self.view(), self.view().viewport()):
+            return False  # everything else (layout, painting) belongs to the list itself
+        return super().eventFilter(obj, event)
+
+    def _update_text(self):
+        count = len(self.checked_data())
+        total = self.model().rowCount()
+        text = (f'{count} of {total} datasets ticked' if count else
+                self.placeholder if total else 'No exported datasets in this project yet')
+        self.setPlaceholderText(text)
+        self.setCurrentIndex(-1)
+
+
+def settings_slider(self, layout, title, minimum, maximum, value, explanation):
+    row = QHBoxLayout()
+    label = QLabel(title); label.setMinimumWidth(115); row.addWidget(label)
+    slider = QSlider(Qt.Orientation.Horizontal); slider.setRange(minimum, maximum); slider.setValue(value)
+    slider.setToolTip(explanation); row.addWidget(slider, 1)
+    display = QLabel(); display.setMinimumWidth(70); row.addWidget(display)
+    help_button = QPushButton('?'); help_button.setFixedWidth(30); help_button.setStyleSheet('padding: 0;')
+    help_button.setAccessibleName(f'Explain {title}')
+    help_button.clicked.connect(lambda: self._explain(title, explanation)); row.addWidget(help_button)
+    slider.valueChanged.connect(lambda number: display.setText(
+        ('Auto' if number == 0 else str(number)) if title == 'Batch size' else
+        str(number * 32) if title == 'Image size' else f'{number}%' if title.endswith('%') else str(number)))
+    slider.valueChanged.emit(value)
+    layout.addLayout(row)
+    return slider, display

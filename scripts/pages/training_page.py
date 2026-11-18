@@ -10,12 +10,12 @@ from PyQt6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLa
                              QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
                              QScrollArea, QVBoxLayout, QWidget)
 
-from paths import ROOT_DIR
-from widgets import settings_slider
-from dataset_validation import inspect_dataset, label_path
-from training_metrics import parse_metrics
+from core.paths import ROOT_DIR
+from ui.widgets import settings_slider
+from datasets.validation import inspect_dataset, label_path
+from training.metrics import parse_metrics
 from pages.combine_panel import CombineDatasetsPanel
-from yolo_export import dataset_label
+from datasets.export import dataset_label
 from pages.training_dashboard import TrainingDashboard
 
 
@@ -265,7 +265,7 @@ class TrainingPage(QWidget):
 
     def show_previews(self, info):
         import cv2
-        from image_io import imread
+        from core.image_io import imread
         from PyQt6.QtGui import QImage, QPixmap
         images = [paths[0] for paths in info['images'].values() if paths]
         for preview, path in zip(self.previews, images):
@@ -350,7 +350,7 @@ class TrainingPage(QWidget):
         model = self.model.currentData()
         if model not in ('yolo11n.pt', 'yolo11s.pt') and not Path(model).is_file():
             QMessageBox.warning(self, 'Model missing', 'Choose an existing YOLO .pt weights file.'); return
-        arguments = [str(ROOT_DIR / 'scripts' / 'train_yolo.py'), str(yaml.resolve()),
+        arguments = [str(ROOT_DIR / 'scripts' / 'training' / 'train_yolo.py'), str(yaml.resolve()),
                      '--model', model, '--epochs', str(self.epochs.value()),
                      '--imgsz', str(self.image_size.value() * 32), '--batch', str(self.batch.value()),
                      '--patience', str(self.patience.value()), '--name', name]
@@ -381,7 +381,7 @@ class TrainingPage(QWidget):
         self.set_inputs_enabled(False)
         self.log.appendPlainText('\nEvaluating held-out test frames…\n')
         self.start.setEnabled(False); self.stop.setEnabled(True); self.evaluate.setEnabled(False)
-        self.process.start(sys.executable, [str(ROOT_DIR / 'scripts' / 'train_yolo.py'),
+        self.process.start(sys.executable, [str(ROOT_DIR / 'scripts' / 'training' / 'train_yolo.py'),
                                             self.active_dataset, '--evaluate', str(self.best_weights)] + job_arguments)
 
     def _read_output(self):
@@ -413,7 +413,7 @@ class TrainingPage(QWidget):
 
     def _offer_source_model(self):
         """Add the detector that annotated this dataset to Starting model, and select it."""
-        from yolo_export import source_model
+        from datasets.export import source_model
         for index in range(self.model.count() - 1, 1, -1):
             if self.model.itemText(index).startswith('Annotation model'):
                 self.model.removeItem(index)

@@ -4,9 +4,9 @@ import time
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QFrame, QSpinBox, QScrollArea, QMessageBox, QProgressDialog)
-from annotation_session import create_session, find_session, set_interval
-from ui_icons import icon, icon_label
-from widgets import VideoPathRow
+from projects.annotation_session import create_session, find_session, set_interval
+from ui.icons import icon, icon_label
+from ui.widgets import VideoPathRow
 
 
 class SessionWorker(QThread):

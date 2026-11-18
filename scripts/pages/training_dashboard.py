@@ -3,8 +3,8 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, PercentFormatter
 from PyQt6.QtWidgets import QGroupBox, QLabel, QProgressBar, QVBoxLayout
 
-from charts import ScrollPassthroughCanvas, _theme_axes
-from training_metrics import METRICS
+from review.charts import ScrollPassthroughCanvas, _theme_axes
+from training.metrics import METRICS
 
 
 class TrainingDashboard(QGroupBox):

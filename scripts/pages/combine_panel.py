@@ -5,9 +5,9 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                              QProgressBar, QPushButton, QVBoxLayout)
 
-from dataset_combine import CombineWorker
-from widgets import CheckableComboBox
-from yolo_export import dataset_label, unique_path
+from datasets.combine import CombineWorker
+from ui.widgets import CheckableComboBox
+from datasets.export import dataset_label, unique_path
 
 
 class CombineDatasetsPanel(QGroupBox):

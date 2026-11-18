@@ -6,7 +6,7 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 
 [tasks]
 GUI = "python scripts/app.py"
-setup-sam = "python scripts/sam_assist.py"
+setup-sam = "python scripts/sam/assist.py"
 
 [dependencies]
 python = "3.11.*"

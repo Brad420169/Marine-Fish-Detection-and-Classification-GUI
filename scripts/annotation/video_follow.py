@@ -1,7 +1,7 @@
 """SAM 2 video tracking for the fish followed in tracking mode.
 
 Ticking Track? (when the SAM model is installed; otherwise the copy-forward lookahead
-in review_tracks.py is used) asks for a limit, then SAM's video tracker (sam_video.py)
+in review/tracks.py is used) asks for a limit, then SAM's video tracker (sam/video.py)
 follows the fish for as long as it stays on screen: first backwards from your box to
 where the fish appeared, then forwards to where it leaves, each way up to the limit.
 SAM decides when the fish has gone, but only after missing it for a short grace period,
@@ -25,11 +25,11 @@ from uuid import uuid4
 from PyQt6.QtCore import QThread, Qt
 from PyQt6.QtWidgets import QProgressDialog
 
-from review_io import box_identity, model_review_row, original_box, review_box
-from review_tracks import VIDEO, unlink_suggestion, untouched_suggestion
-from sam_assist import CHECKPOINT
+from review.io import box_identity, model_review_row, original_box, review_box
+from review.tracks import VIDEO, unlink_suggestion, untouched_suggestion
+from sam.assist import CHECKPOINT
 from annotation.track_dialog import TrackDialog, remember_speed, remembered_speed, sam_device
-from sam_video import GRACE_SECONDS, REFOUND_FRAMES, UNSURE_SCORE, SAMVideoWorker, VideoTracker
+from sam.video import GRACE_SECONDS, REFOUND_FRAMES, UNSURE_SCORE, SAMVideoWorker, VideoTracker
 
 BACK, FORWARD = -1, 1
 

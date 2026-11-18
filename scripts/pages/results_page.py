@@ -6,7 +6,7 @@ file shortcuts, Max-N example frames, and the summary charts panel.
 """
 from __future__ import annotations
 
-from ui_icons import icon
+from ui.icons import icon
 
 from pathlib import Path
 
@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from paths import ROOT_DIR, open_path
-from charts import build_charts, ScrollPassthroughCanvas, _read_summary_csv
+from core.paths import ROOT_DIR, open_path
+from review.charts import build_charts, ScrollPassthroughCanvas, _read_summary_csv
 
 
 class ResultsPage(QWidget):

@@ -11,6 +11,7 @@ and the save / undo / leave flow. Everything else is a part with its own state:
 """
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 
 import cv2
@@ -19,11 +20,12 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QCompleter, QDialog, QHBoxLayout,
                              QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from image_io import imwrite
-from review_io import ReviewVideoWorker, draw_review, original_box
-from review_summary import RefreshWorker, results_need_refresh
-from review_tracks import create_track
-from ui_icons import icon
+from core.image_io import imwrite
+from datasets.export import folder_name, video_stem
+from review.io import ReviewVideoWorker, draw_review, original_box
+from review.summary import RefreshWorker, results_need_refresh
+from review.tracks import create_track
+from ui.icons import icon
 
 from annotation import layout, saving, shortcuts
 from annotation.canvas import SpeciesComboBox, pixmap
@@ -46,6 +48,7 @@ class FrameState:
 
 class ReviewPage(QWidget):
     results_refreshed = pyqtSignal()
+    results_requested = pyqtSignal()  # Generate Results finished: show this session's results
     export_requested = pyqtSignal()
 
     # The app-wide sheet gives every QPushButton a 30px minimum and wide padding, which
@@ -101,6 +104,7 @@ class ReviewPage(QWidget):
         self.video_reader.close()
         session.open(output_dir, video_path)
         self.back.setText('Back to Overview' if session.manual_session else 'Back to Results')
+        self.results_button.setVisible(session.manual_session)
         self.table.setHorizontalHeaderLabels(['Saved species' if session.manual_session else 'Original AI prediction',
                                               'Confidence', 'Reviewed species', 'Decision'])
         self.table.setColumnHidden(1, session.manual_session)
@@ -815,10 +819,50 @@ class ReviewPage(QWidget):
 
     def _start_job(self, worker, message):
         self.worker = worker
-        for widget in (self.back, self.previous, self.next_button, self.table, self.annotations):
+        for widget in (self.back, self.results_button, self.previous, self.next_button, self.table, self.annotations):
             widget.setEnabled(False)
         self.status.setText(message)
         worker.finished.connect(self.job_finished)
+
+    def generate_results(self):
+        """Generate Results (manual sessions): save this frame, then write track_summary.csv,
+        reviewed_detections.csv and the Max-N frames from your boxes, and show them in Results."""
+        self.nav.pause()
+        if self.worker or self.sam.worker or not self.session.root or not self.save_frame(refresh=False):
+            return
+        if not any(r['review_status'] == 'confirmed' for r in self.session.rows):
+            QMessageBox.information(self, 'No annotations yet', 'Box at least one fish before generating results.')
+            return
+        answer = QMessageBox.question(
+            self, 'Generate Results', 'Also make an annotated video?\n\n'
+            'Yes draws your boxes on a copy of the video (Open Annotated Video in Results); this re-encodes every '
+            'frame, so it takes a while on long or 4K videos. No writes just the CSVs and Max-N frames.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return
+        if answer == QMessageBox.StandardButton.Yes:
+            self.refresh_results(lambda: self.make_session_video(self.results_requested.emit))
+        else:
+            self.refresh_results(self.results_requested.emit)
+
+    def session_video_path(self):
+        """Where a manual session's annotated video goes: <video name>_annotated.mp4 in its folder."""
+        stem = video_stem(self.session.root) or 'video'
+        return self.session.root / f'{folder_name(stem)}_annotated.mp4'
+
+    def make_session_video(self, callback):
+        """Draw this session's boxes on a copy of its video, then call ``callback`` (even if it fails)."""
+        if self.worker:
+            return
+        self.after_refresh = callback
+        worker = ReviewVideoWorker(self.session_video_path(), self.session.root, list(self.session.rows), self)
+        worker.progress.connect(lambda percent: self.status.setText(f'Making the annotated video… {percent}%'))
+        worker.succeeded.connect(lambda path: self.status.setText(f'Results and annotated video ready: {Path(path).name}'))
+        worker.failed.connect(lambda error: QMessageBox.warning(
+            self, 'Annotated video not made', f'{error}\n\nYour results (CSVs and Max-N frames) are saved.'))
+        self._start_job(worker, 'Making the annotated video…')
+        worker.start()
 
     def regenerate_video(self):
         session = self.session
@@ -861,7 +905,7 @@ class ReviewPage(QWidget):
     def job_finished(self):
         worker, self.worker = self.worker, None
         worker.deleteLater()
-        for widget in (self.back, self.table, self.annotations):
+        for widget in (self.back, self.results_button, self.table, self.annotations):
             widget.setEnabled(True)
         self.show_frame()
         callback, self.after_refresh = self.after_refresh, None

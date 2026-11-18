@@ -6,7 +6,7 @@ page stack, so opening a project switches page rather than swapping windows.
 """
 from __future__ import annotations
 
-from ui_icons import icon, icon_label, icon_text
+from ui.icons import icon, icon_label, icon_text
 
 import csv
 from datetime import datetime, timedelta
@@ -20,9 +20,9 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from paths import ROOT_DIR, open_path
-from widgets import PathRow
-from project_manager import Project, create_project, delete_project, list_projects
+from core.paths import ROOT_DIR, open_path
+from ui.widgets import PathRow
+from projects.project_manager import Project, create_project, delete_project, list_projects
 
 RECENT_LIMIT = 4
 DEFAULT_THUMBNAIL = ROOT_DIR / 'assets' / 'project_placeholder.png'
