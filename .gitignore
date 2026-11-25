@@ -19,3 +19,7 @@ Thumbs.db
 
 # Errors the app caught (error_report.py)
 error_log.txt
+
+# User guide: the LaTeX source and figures stay local; only the built PDF is shared.
+/docs/user-guide/*
+!/docs/user-guide/Marine_Fish_App_User_Guide.pdf

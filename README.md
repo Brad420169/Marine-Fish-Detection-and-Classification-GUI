@@ -8,6 +8,8 @@ A desktop application for automated marine fish detection, classification, track
 
 ---
 
+> **New here? Read the [User Guide (PDF)](docs/user-guide/Marine_Fish_App_User_Guide.pdf)**: installing, detecting, annotating with SAM, training your own model, results and troubleshooting, step by step with screenshots.
+
 ## Overview 
 
 The Marine Fish Detection and Classification GUI provides an accessible graphical interface for processing underwater video using AI-driven fish detection and classification.
