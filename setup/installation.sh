@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install a fresh copy of Marine Fish Detection GUI after installing Pixi.
+# Install Marine Fish Detection GUI after installing Pixi. Rerunning resumes an earlier attempt.
 set -euo pipefail
 STEP='Detecting OS environment'
 trap 'status=$?; if (( status != 0 )); then printf "Installation failed during: %s (exit code %s). See the error above.\n" "$STEP" "$status" >&2; fi' EXIT
@@ -26,14 +26,29 @@ if ! command -v pixi >/dev/null 2>&1; then
     echo 'Install Pixi first, then reopen Terminal. See the README.' >&2
     exit 1
 fi
-echo 'Pixi is available.'
+# Keep in sync with requires-pixi in pixi.toml: older Pixi rejects pixi.lock as out of date.
+MIN_PIXI=0.84.2
+pixi_version=$(pixi --version | awk '{print $2}')
+if [[ "$(printf '%s\n' "$MIN_PIXI" "$pixi_version" | sort -V | head -n1)" != "$MIN_PIXI" ]]; then
+    printf 'Pixi %s or newer is required (found %s). Update Pixi with:\n\n    pixi self-update\n\nthen rerun this installer.\n' "$MIN_PIXI" "$pixi_version" >&2
+    exit 1
+fi
+echo "Pixi $pixi_version is available."
 INSTALL_DIR="${INSTALL_DIR:-$HOME/MarineApps}"
 # Resolve relative destinations before changing into the cloned repository.
 [[ "$INSTALL_DIR" = /* ]] || INSTALL_DIR="$PWD/$INSTALL_DIR"
 PROJECT_DIR="$INSTALL_DIR/Marine-Fish-Detection-and-Classification-GUI"
+REPO_URL=https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git
+RESUME=false
 if [[ -e "$PROJECT_DIR" || -L "$PROJECT_DIR" ]]; then
-    echo "Destination already exists: $PROJECT_DIR. Choose another INSTALL_DIR or use the existing installation." >&2
-    exit 1
+    # Every step after cloning is safe to repeat, so an earlier clone of this repository is reused as is.
+    if [[ "$(git -C "$PROJECT_DIR" remote get-url origin 2>/dev/null)" == "$REPO_URL" ]]; then
+        RESUME=true
+        echo "Existing installation found at $PROJECT_DIR; resuming installation there."
+    else
+        echo "Destination already exists and is not a copy of this app: $PROJECT_DIR. Choose another INSTALL_DIR." >&2
+        exit 1
+    fi
 fi
 STEP='Checking Git and Git LFS'
 echo "$STEP..."
@@ -47,11 +62,13 @@ else
     git lfs version
     echo 'Git and Git LFS installed successfully.'
 fi
-STEP='Cloning Git repository'
-echo "$STEP..."
-mkdir -p "$INSTALL_DIR"
-git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git "$PROJECT_DIR"
-echo 'Repository cloned.'
+if [[ "$RESUME" == false ]]; then
+    STEP='Cloning Git repository'
+    echo "$STEP..."
+    mkdir -p "$INSTALL_DIR"
+    git clone "$REPO_URL" "$PROJECT_DIR"
+    echo 'Repository cloned.'
+fi
 cd "$PROJECT_DIR"
 STEP='Downloading model files with Git LFS'
 echo "$STEP..."

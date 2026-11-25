@@ -1,4 +1,4 @@
-# Install a fresh copy of Marine Fish Detection GUI after installing Pixi.
+# Install Marine Fish Detection GUI after installing Pixi. Rerunning resumes an earlier attempt.
 param(
     [string]$InstallDir = (Join-Path $HOME 'MarineApps')
 )
@@ -14,11 +14,28 @@ try {
     if (-not (Get-Command pixi -ErrorAction SilentlyContinue)) {
         throw 'Install Pixi first, then reopen PowerShell. See the README.'
     }
-    Write-Host 'Pixi is available.'
+    # Keep in sync with requires-pixi in pixi.toml: older Pixi rejects pixi.lock as out of date.
+    $MinPixi = [version]'0.84.2'
+    $PixiVersion = [version]((& pixi --version) -split ' ')[1]
+    if ($PixiVersion -lt $MinPixi) {
+        throw "Pixi $MinPixi or newer is required (found $PixiVersion). Update Pixi with:`n`n    pixi self-update`n`nthen rerun this installer."
+    }
+    Write-Host "Pixi $PixiVersion is available."
     $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
     $ProjectDir = Join-Path $InstallDir 'Marine-Fish-Detection-and-Classification-GUI'
+    $RepoUrl = 'https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git'
+    $Resume = $false
     if (Test-Path -LiteralPath $ProjectDir) {
-        throw "Destination already exists: $ProjectDir. Choose another -InstallDir or use the existing installation."
+        # Every step after cloning is safe to repeat, so an earlier clone of this repository is reused as is.
+        $Origin = $null
+        if (Get-Command git -ErrorAction SilentlyContinue) {
+            $Origin = & git -C $ProjectDir remote get-url origin 2>$null
+        }
+        if ($Origin -ne $RepoUrl) {
+            throw "Destination already exists and is not a copy of this app: $ProjectDir. Choose another -InstallDir."
+        }
+        $Resume = $true
+        Write-Host "Existing installation found at $ProjectDir; resuming installation there."
     }
     $Step = 'Checking Git and Git LFS'
     Write-Host "$Step..."
@@ -45,12 +62,14 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Git LFS is unavailable.' }
         Write-Host 'Git and Git LFS installed successfully.'
     }
-    $Step = 'Cloning Git repository'
-    Write-Host "$Step..."
-    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    & git clone https://github.com/Brad420169/Marine-Fish-Detection-and-Classification-GUI.git $ProjectDir
-    if ($LASTEXITCODE -ne 0) { throw 'Git clone failed.' }
-    Write-Host 'Repository cloned.'
+    if (-not $Resume) {
+        $Step = 'Cloning Git repository'
+        Write-Host "$Step..."
+        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        & git clone $RepoUrl $ProjectDir
+        if ($LASTEXITCODE -ne 0) { throw 'Git clone failed.' }
+        Write-Host 'Repository cloned.'
+    }
     Push-Location -LiteralPath $ProjectDir
     try {
         $Step = 'Downloading model files with Git LFS'

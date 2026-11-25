@@ -84,7 +84,7 @@ https://github.com/user-attachments/assets/dadffcb2-fd3d-4065-80d7-ab51183c1109
 
 Choose your platform: [<img src="assets/platforms/windows.svg" width="22" alt=""> **Windows**](#windows) · [<img src="assets/platforms/linux.svg" width="22" alt=""> **Linux**](#linux-and-macos) · [<img src="assets/platforms/macos.svg" width="22" alt=""> **macOS**](#linux-and-macos)
 
-Install Pixi once, then download and run the installer for your platform. It installs Git and Git LFS, downloads the app into `~/MarineApps/Marine-Fish-Detection-and-Classification-GUI`, downloads the fish-only model into the app’s `models/` folder, installs its dependencies, and creates the desktop icon. Existing installation folders are left untouched; choose a different directory if one already exists.
+Install Pixi once, then download and run the installer for your platform. It installs Git and Git LFS, downloads the app into `~/MarineApps/Marine-Fish-Detection-and-Classification-GUI`, downloads the fish-only model into the app’s `models/` folder, installs its dependencies, and creates the desktop icon. It needs Pixi 0.84.2 or newer; update an older Pixi with `pixi self-update`. If installation stops partway, fix the reported problem and rerun the same installer command: it continues in the existing application folder and keeps your files. A folder at that location that is not a copy of this app is left untouched; choose a different directory instead.
 
 <a id="windows"></a>
 ### <img src="assets/platforms/windows.svg" width="28" alt=""> Windows
@@ -553,22 +553,15 @@ git lfs install
 git lfs pull
 ```
  
-### Installation stopped partway through
-The installer refuses to overwrite an existing application folder. If cloning completed, open PowerShell/Terminal in that folder and resume with:
-
-```text
-git lfs install --local
-git lfs pull
-pixi install --locked
+### Pixi version is too old / `lock file not up-to-date with the workspace`
+The app needs Pixi 0.84.2 or newer. Older versions cannot read `pixi.lock`. Update Pixi, then rerun the installer:
 ```
-
-Stop if a command fails. Once these succeed, recreate the shortcut using the command for your platform:
-
-- **Windows:** `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup\create_windows_shortcut.ps1`
-- **Linux:** `bash setup/create_linux_shortcut.sh`
-- **macOS:** `bash setup/create_macos_shortcut.sh`
-
-If cloning did not complete, choose a new installation directory and rerun the installer. Do not delete an existing folder containing your projects or results. If Pixi reports an outdated lockfile, update the checkout first; do not delete `pixi.lock` to work around it.
+pixi self-update
+```
+If Pixi was installed with another package manager (for example Homebrew), update it there instead. Do not delete `pixi.lock` to work around this error.
+ 
+### Installation stopped partway through
+Fix the problem reported above the error, then rerun the same installer command. It finds the existing application folder, skips cloning, and continues with the remaining steps; files already downloaded are kept. Do not delete an existing folder containing your projects or results.
 
 ### macOS installer rejects the platform
 Run `uname -m` and `sw_vers -productVersion`. The installer requires `arm64` and macOS 13 or newer. On an M-series Mac reporting `x86_64`, close Terminal, turn off **Open using Rosetta** in Terminal's Finder **Get Info** window if enabled, and reopen it. Intel Macs are not supported by this environment.

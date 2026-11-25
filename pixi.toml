@@ -3,6 +3,8 @@ name = "auto-fish-detect-gui"
 version = "0.1.0"
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-arm64"]
+# Older Pixi rejects pixi.lock as out of date; keep in sync with MIN_PIXI in setup/installation.*.
+requires-pixi = ">=0.84.2"
 
 [tasks]
 GUI = "python scripts/app.py"
