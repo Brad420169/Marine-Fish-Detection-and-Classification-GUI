@@ -81,6 +81,24 @@ def split_counts(total, train_percent, val_percent):
     return train, val, total - train - val
 
 
+BLOCK_FRAMES = 10  # longest run of consecutive frames kept together in one split
+
+
+def split_assignments(total, train_percent, val_percent):
+    """The split ('train', 'val' or 'test') of each of ``total`` frames in time order.
+
+    Frames are grouped into short consecutive blocks dealt evenly across the three splits,
+    so every part of the video (each species, near and far) reaches every split, while
+    neighbouring, near-identical frames mostly stay in the same split.
+    """
+    split_counts(total, train_percent, val_percent)  # validates the frame count and percentages
+    size = max(1, min(BLOCK_FRAMES, total // 30))  # keep about 30+ blocks so each split is spread out
+    counts = split_counts(math.ceil(total / size), train_percent, val_percent)
+    order = sorted(((k + 0.5) / count, split) for split, count in enumerate(counts) for k in range(count))
+    blocks = [('train', 'val', 'test')[split] for _, split in order]
+    return [blocks[index // size] for index in range(total)]
+
+
 SOURCE_MODEL = 'source_model.json'  # beside data.yaml: {"weights": path of the run's detector}
 
 
@@ -111,7 +129,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20, pro
     InterruptedError) and nothing is left behind."""
     root, destination = Path(root), Path(destination).expanduser().resolve()
     original, rows, numbers = reviewed_frames(root)
-    train_count, val_count, _ = split_counts(len(numbers), train_percent, val_percent)
+    splits = split_assignments(len(numbers), train_percent, val_percent)
     if destination.exists():
         raise FileExistsError(f'Dataset folder already exists: {destination}')
     if not destination.parent.is_dir():
@@ -136,7 +154,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20, pro
             for index, number in enumerate(numbers):
                 if cancelled and cancelled():
                     raise InterruptedError('Export stopped; nothing was saved.')
-                split = 'train' if index < train_count else 'val' if index < train_count + val_count else 'test'
+                split = splits[index]
                 image = root / 'review_frames' / f'frame_{number:06d}.jpg'
                 frame = imread(str(image)) if image.is_file() else None
                 if frame is None and capture is not None:
@@ -176,7 +194,7 @@ def export_yolo_dataset(root, destination, train_percent=70, val_percent=20, pro
     finally:
         if capture is not None:
             capture.release()
-    return destination / 'data.yaml', (train_count, val_count, len(numbers) - train_count - val_count)
+    return destination / 'data.yaml', tuple(splits.count(split) for split in ('train', 'val', 'test'))
 
 
 class ExportWorker(QThread):

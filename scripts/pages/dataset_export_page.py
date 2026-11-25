@@ -19,7 +19,7 @@ class DatasetExportPage(QWidget):
         layout = QVBoxLayout(self)
         export_group = QGroupBox('Generate AI training data')
         export_layout = QVBoxLayout(export_group)
-        note = QLabel('Frames with at least one checked box are exported. Frames are split in time order to reduce overlap between sets.')
+        note = QLabel('Frames with at least one checked box are exported. Frames are dealt to the sets in short blocks across the whole video, so every set covers every part of it.')
         note.setWordWrap(True); export_layout.addWidget(note)
         self.frame_count = QLabel('Open an annotation session to export completed frames.')
         self.frame_count.setObjectName('muted'); export_layout.addWidget(self.frame_count)
