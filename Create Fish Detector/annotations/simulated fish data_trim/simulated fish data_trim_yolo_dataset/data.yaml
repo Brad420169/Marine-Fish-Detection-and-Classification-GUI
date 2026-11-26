@@ -1,0 +1,8 @@
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: "blue tang"
+  1: "butterfly fish"
+  2: "parrot fish"
+  3: "yellow tang"
