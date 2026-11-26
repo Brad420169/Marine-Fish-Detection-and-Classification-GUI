@@ -1,5 +1,0 @@
-dataset,video,video_duration_seconds,species,max_n,max_n_timestamp,max_n_frame,first_seen,last_seen,visible_seconds,observation_span_seconds,unique_tracks,total_detections,mean_confidence
-detect,detect.mp4,19.7,yellow tang,2,00:08,246,00:03,00:13,8.8,9.4,10,280,0.8343
-detect,detect.mp4,19.7,blue tang,2,00:17,498,00:03,00:19,7.7,15.7,11,234,0.8321
-detect,detect.mp4,19.7,butterfly fish,2,00:03,101,00:00,00:08,5.0,8.1,9,155,0.913
-detect,detect.mp4,19.7,parrot fish,1,00:03,103,00:03,00:16,1.2,12.5,4,36,0.6547
