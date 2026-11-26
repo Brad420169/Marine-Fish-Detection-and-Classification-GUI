@@ -50,7 +50,8 @@ Follow the detection workflow: select your video and model, run detection, revie
 <!-- <video src="./assets/Detect.mp4" controls width="800"></video>
 
 [Watch the Fish Detection tutorial](./assets/Detect.mp4) -->
-https://github.com/user-attachments/assets/818c5b37-be47-4773-8d9f-978ede435ffe
+https://github.com/user-attachments/assets/999155a8-1cb4-43f8-b09b-d1f3bd4192a7
+
 
 
 ### User 2: Generate Training Data
@@ -62,7 +63,8 @@ Start in **Annotate Data**: load a video, draw and label fish, then export revie
 <!-- <video src="./assets/Annotate.mp4" controls width="800"></video>
 
 [Watch the Generate Training Data tutorial](./assets/Annotate.mp4) -->
-https://github.com/user-attachments/assets/1e629fb4-20c2-45b1-82e4-2d2c73295168
+https://github.com/user-attachments/assets/ec9d1f70-3455-44c1-bbc8-068cca1f624a
+
 
 
 ### User 3: Train an AI Model
@@ -74,7 +76,8 @@ Start in **Train a Model**: load your YOLO dataset’s `data.yaml`, validate it,
 <!-- <video src="./assets/Train_Model.mp4" controls width="800"></video>
 
 [Watch the Train an AI Model tutorial](./assets/Train_Model.mp4) -->
-https://github.com/user-attachments/assets/dadffcb2-fd3d-4065-80d7-ab51183c1109
+https://github.com/user-attachments/assets/e8f86542-1704-4474-9087-70205f016a86
+
 
 ---
 
